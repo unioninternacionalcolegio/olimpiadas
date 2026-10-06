@@ -1,0 +1,299 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ================= ROLES Y USUARIOS =================
+enum Role {
+  ADMIN       // Control total
+  ASISTENTE   // Sube nóminas, registra puntajes y observaciones
+  ASESOR      // Solo ve su aula y rivales
+  DELEGADO    // Mismos permisos que asesor
+}
+
+model User {
+  id          String     @id @default(uuid())
+  username    String     @unique 
+  password    String     // Hash de contraseña
+  name        String
+  dni         String     @unique // DNI del usuario
+  phone       String     // Celular del usuario
+  role        Role       @default(DELEGADO)
+  
+  classroomId String?
+  classroom   Classroom? @relation(fields: [classroomId], references: [id])
+
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+}
+
+// ================= ESTRUCTURA ESCOLAR =================
+model Group {
+  id               String      @id @default(uuid())
+  name             String      
+  
+  studentClassrooms Classroom[] @relation("StudentGroup")
+  parentClassrooms  Classroom[] @relation("ParentGroup")
+  
+  matches          Match[]      @relation("GroupMatches")
+  
+  createdAt        DateTime    @default(now())
+}
+
+model Classroom {
+  id             String      @id @default(uuid())
+  name           String      
+  
+  studentGroupId String
+  studentGroup   Group       @relation("StudentGroup", fields: [studentGroupId], references: [id])
+  
+  parentGroupId  String?
+  parentGroup    Group?      @relation("ParentGroup", fields: [parentGroupId], references: [id])
+  
+  users          User[]
+  teams          Team[]
+  payments       Payment[]
+  rankings       Ranking[]   
+
+  createdAt      DateTime    @default(now())
+}
+
+model Payment {
+  id          String    @id @default(uuid())
+  amount      Float
+  description String
+  classroomId String
+  classroom   Classroom @relation(fields: [classroomId], references: [id])
+  createdAt   DateTime  @default(now())
+}
+
+// ================= DISCIPLINAS, SUBDISCIPLINAS Y ETAPAS DINÁMICAS =================
+enum TargetAudience {
+  ESTUDIANTES
+  PADRES
+  MIXTO
+}
+
+enum MatchFormat {
+  ENFRENTAMIENTO  // 1v1 (Vóley, Fulbito)
+  COMPETENCIA     // Multi-participante por Grupo (Atletismo)
+}
+
+enum RankingScope {
+  POR_GRUPO       
+  GLOBAL          
+}
+
+model Discipline {
+  id             String          @id @default(uuid())
+  name           String          // Ej. Atletismo, Vóley, Fulbito
+  audience       TargetAudience
+  format         MatchFormat    
+  rankingScope   RankingScope   
+  
+  subDisciplines SubDiscipline[]
+
+  createdAt      DateTime        @default(now())
+}
+
+model SubDiscipline {
+  id             String      @id @default(uuid())
+  name           String      // Ej. 50 M (damas), 100 M (varones), Equipo A, Equipo B, Madres, Mixto
+  
+  disciplineId   String
+  discipline     Discipline  @relation(fields: [disciplineId], references: [id], onDelete: Cascade)
+
+  maxStarters    Int            
+  maxSubs        Int            
+  
+  // NUEVO: ¿Suma puntos para el campeón general de la disciplina? (Ideal para Atletismo Estudiantes)
+  sumsToGeneralRanking Boolean @default(true)
+
+  // RELACIÓN A LAS ETAPAS DINÁMICAS (Ej: 1. Fase Grupos, 2. Semifinal, 3. Liguilla)
+  stages         SubDisciplineStage[]
+
+  teams          Team[]
+  matches        Match[]       // Se mantiene para facilitar consultas globales
+  rankings       Ranking[]     // Se mantiene para facilitar consultas globales
+
+  createdAt      DateTime    @default(now())
+}
+
+enum StageType {
+  ACUMULACION_PUNTOS   // Genera tabla de posiciones sumando puntos
+  ELIMINACION_DIRECTA  // Llaves de muerte súbita (Solo importa avanzar)
+}
+
+// NUEVO MODELO: Configuración independiente por Etapa
+model SubDisciplineStage {
+  id              String        @id @default(uuid())
+  subDisciplineId String
+  subDiscipline   SubDiscipline @relation(fields: [subDisciplineId], references: [id], onDelete: Cascade)
+  
+  name            String        // Ej: "Etapa 1: Grupos", "Etapa 2: Eliminatoria", "Etapa 3: Clasificatoria"
+  stageOrder      Int           // 1, 2, 3 (Para saber qué etapa va primero)
+  stageType       StageType     @default(ACUMULACION_PUNTOS)
+  
+  // Los puntajes ahora pertenecen a LA ETAPA, no a la disciplina, permitiendo cambiar las reglas
+  pointsForWin    Int           @default(3)
+  pointsForTie    Int           @default(1)
+  pointsForLoss   Int           @default(0)
+
+  matches         Match[]
+  rankings        Ranking[]
+
+  createdAt       DateTime      @default(now())
+}
+
+// ================= EQUIPOS Y NÓMINAS =================
+model Team {
+  id              String        @id @default(uuid())
+  name            String        
+  letter          String        @default("A") // NUEVO: "A", "B", "C"
+  
+  classroomId     String
+  classroom       Classroom     @relation(fields: [classroomId], references: [id])
+  
+  subDisciplineId String
+  subDiscipline   SubDiscipline @relation(fields: [subDisciplineId], references: [id])
+
+  players         TeamPlayer[]
+  
+  homeMatches     Match[]       @relation("HomeTeam")
+  awayMatches     Match[]       @relation("AwayTeam")
+  matchesWon      Match[]       @relation("WinnerTeam")
+  competitions    MatchCompetitor[]
+
+  createdAt       DateTime      @default(now())
+
+  // Esto obliga a que no se repita el mismo Equipo A en la misma subdisciplina del mismo salón
+  @@unique([classroomId, subDisciplineId, letter])
+}
+
+model Player {
+  id        String       @id @default(uuid())
+  dni       String       @unique
+  firstName String       // Nombres
+  lastName  String       // Apellidos
+  isParent  Boolean      @default(false)
+  gender    String       
+  
+  teams     TeamPlayer[]
+  
+  // NUEVO: Permite saber en qué competencias individuales ha participado el jugador
+  competitions MatchCompetitor[] 
+}
+
+model TeamPlayer {
+  id        String   @id @default(uuid())
+  teamId    String
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  playerId  String
+  player    Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  
+  isStarter Boolean  @default(true) // true = Titular, false = Suplente
+  
+  @@unique([teamId, playerId]) 
+}
+
+// ================= PARTIDOS Y COMPETENCIAS =================
+enum MatchStatus {
+  PENDIENTE
+  EN_JUEGO
+  FINALIZADO
+  WALKOVER        
+}
+
+model Match {
+  id              String          @id @default(uuid())
+  
+  subDisciplineId String
+  subDiscipline   SubDiscipline   @relation(fields: [subDisciplineId], references: [id], onDelete: Cascade)
+  
+  // NUEVO: El partido ahora pertenece a una Etapa Dinámica específica
+  stageId         String
+  stage           SubDisciplineStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  
+  groupId         String?
+  group           Group?          @relation("GroupMatches", fields: [groupId], references: [id])
+  
+  court           String          
+  matchOrder      Int             
+  
+  homeTeamId      String?
+  homeTeam        Team?           @relation("HomeTeam", fields: [homeTeamId], references: [id])
+  awayTeamId      String?
+  awayTeam        Team?           @relation("AwayTeam", fields: [awayTeamId], references: [id])
+
+  status          MatchStatus     @default(PENDIENTE)
+
+  homeScore       Int             @default(0) 
+  awayScore       Int             @default(0) 
+  homeTablePts    Int             @default(0)
+  awayTablePts    Int             @default(0)
+
+  observation     String?         @db.Text
+  winnerId        String?         
+  winnerTeam      Team?           @relation("WinnerTeam", fields: [winnerId], references: [id])
+
+  competitors     MatchCompetitor[]
+
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+}
+
+model MatchCompetitor {
+  id        String  @id @default(uuid())
+  matchId   String
+  match     Match   @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  
+  teamId    String
+  team      Team    @relation(fields: [teamId], references: [id])
+  
+  // ==========================================
+  // LA FORMA CORRECTA DE REGISTRAR AL ATLETA
+  // ==========================================
+  playerId  String? // Opcional, porque en Vóley o Fulbito compite todo el equipo, no 1 solo
+  player    Player? @relation(fields: [playerId], references: [id])
+
+  score     Float   @default(0) // Tiempo en segundos (Ej: Atletismo)
+  points    Int     @default(0) // Puntos otorgados a la tabla (+6, +4, +2)
+  position  Int?    // Lugar en la carrera (1, 2, 3)
+
+  // Modificamos el unique constraint para permitir que un mismo equipo 
+  // tenga a varios corredores distintos en la misma carrera (Ej: Maratón)
+  @@unique([matchId, teamId, playerId])
+}
+
+// ================= RESULTADOS GLOBALES (AHORA SEPARADOS POR ETAPA DINÁMICA) =================
+model Ranking {
+  id              String          @id @default(uuid())
+  
+  subDisciplineId String
+  subDiscipline   SubDiscipline   @relation(fields: [subDisciplineId], references: [id], onDelete: Cascade)
+  
+  // NUEVO: La tabla de posiciones se genera y guarda independientemente POR ETAPA
+  stageId         String
+  stage           SubDisciplineStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  
+  classroomId     String
+  classroom       Classroom       @relation(fields: [classroomId], references: [id])
+
+  points          Int             @default(0)
+  
+  goalsFor        Int             @default(0)
+  goalsAgainst    Int             @default(0)
+
+  position        Int?            
+  observation     String?         @db.Text
+
+  createdAt       DateTime        @default(now())
+  
+  // El salón tendrá un registro único de puntaje por Etapa, lo que permite el reseteo automático
+  @@unique([stageId, classroomId])
+}
