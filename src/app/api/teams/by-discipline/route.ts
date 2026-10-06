@@ -17,10 +17,15 @@ export async function GET(request: Request) {
             return NextResponse.json({ error: "Falta disciplineId" }, { status: 400 });
         }
 
-        // AHORA TRAEMOS EL EQUIPO CON SU SALÓN (y sus grupos) Y CON SUS JUGADORES
+        // AHORA TRAEMOS EL EQUIPO BUSCANDO A TRAVÉS DE LA SUBDISCIPLINA
         const teams = await prisma.team.findMany({
-            where: { disciplineId },
+            where: {
+                subDiscipline: {
+                    disciplineId: disciplineId
+                }
+            },
             include: {
+                subDiscipline: true, // Agregado para que sepas a qué categoría exacta pertenece el equipo
                 classroom: {
                     include: { studentGroup: true, parentGroup: true }
                 },

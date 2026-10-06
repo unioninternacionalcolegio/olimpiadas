@@ -9,10 +9,13 @@ export async function GET(request: Request) {
         if (!session) return NextResponse.json({ error: "No autorizado" }, { status: 403 });
 
         const { searchParams } = new URL(request.url);
-        const disciplineId = searchParams.get("disciplineId");
+        // Ahora filtramos por la nueva estructura
+        const subDisciplineId = searchParams.get("subDisciplineId");
+        const stageId = searchParams.get("stageId");
 
         const whereCondition: any = {};
-        if (disciplineId) whereCondition.disciplineId = disciplineId;
+        if (subDisciplineId) whereCondition.subDisciplineId = subDisciplineId;
+        if (stageId) whereCondition.stageId = stageId;
 
         const rankings = await prisma.ranking.findMany({
             where: whereCondition,
@@ -20,15 +23,17 @@ export async function GET(request: Request) {
                 classroom: {
                     include: { studentGroup: true, parentGroup: true }
                 },
-                discipline: true
+                subDiscipline: true,
+                stage: true // Incluimos la etapa también
             },
             orderBy: [
-                { pointsAwarded: "desc" }
+                { points: "desc" } // Corregido: antes decía pointsAwarded
             ]
         });
 
         return NextResponse.json(rankings);
     } catch (error) {
+        console.error("Error GET rankings:", error);
         return NextResponse.json({ error: "Error interno del servidor" }, { status: 500 });
     }
 }
@@ -40,27 +45,49 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: "No autorizado" }, { status: 403 });
         }
 
-        const { disciplineId, classroomId, position, pointsAwarded, observation } = await request.json();
+        // Extraemos los campos del nuevo modelo
+        const { subDisciplineId, stageId, classroomId, position, points, observation, goalsFor, goalsAgainst } = await request.json();
 
-        if (!disciplineId || !classroomId || pointsAwarded === undefined) {
-            return NextResponse.json({ error: "Faltan campos obligatorios" }, { status: 400 });
+        if (!subDisciplineId || !stageId || !classroomId || points === undefined) {
+            return NextResponse.json({ error: "Faltan campos obligatorios (subDiscipline, stage, classroom, points)" }, { status: 400 });
         }
 
-        const newRanking = await prisma.ranking.create({
-            data: {
-                disciplineId,
+        // Usamos upsert por la regla @@unique([stageId, classroomId])
+        // Si el salón ya tiene ranking en esta etapa, lo actualiza. Si no, lo crea.
+        const newRanking = await prisma.ranking.upsert({
+            where: {
+                stageId_classroomId: {
+                    stageId,
+                    classroomId
+                }
+            },
+            update: {
+                position: position ? Number(position) : null,
+                points: Number(points),
+                goalsFor: goalsFor ? Number(goalsFor) : 0,
+                goalsAgainst: goalsAgainst ? Number(goalsAgainst) : 0,
+                observation
+            },
+            create: {
+                subDisciplineId,
+                stageId,
                 classroomId,
                 position: position ? Number(position) : null,
-                pointsAwarded: Number(pointsAwarded),
+                points: Number(points),
+                goalsFor: goalsFor ? Number(goalsFor) : 0,
+                goalsAgainst: goalsAgainst ? Number(goalsAgainst) : 0,
                 observation
             },
             include: {
-                classroom: { include: { studentGroup: true, parentGroup: true } }
+                classroom: { include: { studentGroup: true, parentGroup: true } },
+                subDiscipline: true,
+                stage: true
             }
         });
 
         return NextResponse.json({ message: "Resultado registrado con éxito", ranking: newRanking }, { status: 201 });
     } catch (error) {
+        console.error("Error POST rankings:", error);
         return NextResponse.json({ error: "Error interno del servidor" }, { status: 500 });
     }
 }

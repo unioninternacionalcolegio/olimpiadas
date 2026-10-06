@@ -132,7 +132,8 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
                             score: Number(comp.score) || 0,
                             position: comp.position ? Number(comp.position) : null,
                             points: Number(comp.points) || 0,
-                            playerName: comp.playerName || null // GUARDA EL NOMBRE DEL ATLETA AQUÍ
+                            // CORRECCIÓN: Guardamos el ID del jugador en lugar del string playerName
+                            playerId: comp.playerId || null
                         }
                     });
                 }
