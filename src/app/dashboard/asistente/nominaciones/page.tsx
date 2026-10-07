@@ -48,6 +48,7 @@ export default function NominacionesPage() {
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const [savedTeams, setSavedTeams] = useState<any[]>([]);
+    const [annotatedSavedTeams, setAnnotatedSavedTeams] = useState<any[]>([]);
     const [isLoadingTeams, setIsLoadingTeams] = useState(false);
 
     const [editingPlayer, setEditingPlayer] = useState<any>(null);
@@ -64,6 +65,51 @@ export default function NominacionesPage() {
             setSavedTeams([]);
         }
     }, [selectedClassroomId]);
+
+    // --- LÓGICA CAMBIADA: Agrupar por SUB-DISCIPLINA para validar Equipo A vs Equipo B ---
+    useEffect(() => {
+        const newTeams = JSON.parse(JSON.stringify(savedTeams));
+        const subDisciplineMap = new Map();
+
+        newTeams.forEach((team: any) => {
+            const subId = team.subDisciplineId;
+            if (!subDisciplineMap.has(subId)) subDisciplineMap.set(subId, []);
+            subDisciplineMap.get(subId).push(team);
+        });
+
+        subDisciplineMap.forEach((teamsInSubDisc: any[]) => {
+            const dniToTeams = new Map<string, string[]>();
+
+            teamsInSubDisc.forEach((team) => {
+                team.players.forEach((p: any) => {
+                    const dni = p.player.dni;
+                    const teamName = `Equipo ${team.letter}`;
+                    if (!dniToTeams.has(dni)) dniToTeams.set(dni, []);
+                    dniToTeams.get(dni)?.push(teamName);
+                });
+            });
+
+            teamsInSubDisc.forEach((team) => {
+                team.players.forEach((p: any) => {
+                    const dni = p.player.dni;
+                    const teamsWithDni = dniToTeams.get(dni);
+                    if (teamsWithDni && teamsWithDni.length > 1) {
+                        p.isDuplicated = true;
+                        const otherTeams = teamsWithDni.filter((t: string) => t !== `Equipo ${team.letter}`);
+                        if (otherTeams.length > 0) {
+                            p.duplicateMsg = `Advertencia: Juega también en ${otherTeams.join(', ')}`;
+                        } else {
+                            p.duplicateMsg = `Advertencia: DNI repetido en este mismo equipo`;
+                        }
+                    } else {
+                        p.isDuplicated = false;
+                    }
+                });
+            });
+        });
+
+        setAnnotatedSavedTeams(newTeams);
+    }, [savedTeams]);
 
     const fetchInitialData = async () => {
         try {
@@ -90,7 +136,6 @@ export default function NominacionesPage() {
         }
     };
 
-    // --- NUEVO: FUNCIÓN PARA DESCARGAR LA PLANTILLA EXCEL ---
     const handleDownloadTemplate = (discipline: Discipline) => {
         if (!discipline.subDisciplines || discipline.subDisciplines.length === 0) {
             alert(`La disciplina ${discipline.name} no tiene categorías registradas aún.`);
@@ -98,29 +143,25 @@ export default function NominacionesPage() {
         }
 
         const wb = XLSX.utils.book_new();
-        // Cabeceras exactas que el sistema lee
         const headers = [["DNI", "NOMBRES", "APELLIDOS", "GENERO", "CONDICION", "ES_PADRE", "N° CAMISETA"]];
 
         discipline.subDisciplines.forEach((sub: any) => {
             const ws = XLSX.utils.aoa_to_sheet(headers);
 
-            // Configurar el ancho de las columnas para que se vea profesional
             ws['!cols'] = [
-                { wch: 12 }, // DNI
-                { wch: 25 }, // NOMBRES
-                { wch: 25 }, // APELLIDOS
-                { wch: 10 }, // GENERO
-                { wch: 12 }, // CONDICION
-                { wch: 12 }, // ES_PADRE
-                { wch: 15 }, // N° CAMISETA
+                { wch: 12 },
+                { wch: 25 },
+                { wch: 25 },
+                { wch: 10 },
+                { wch: 12 },
+                { wch: 12 },
+                { wch: 15 },
             ];
 
-            // Excel solo permite 31 caracteres por hoja y sin caracteres especiales
             const safeSheetName = sub.name.replace(/[\\\/\?\*\[\]:]/g, "").substring(0, 31);
             XLSX.utils.book_append_sheet(wb, ws, safeSheetName);
         });
 
-        // Descargar el archivo con el nombre exacto de la disciplina
         XLSX.writeFile(wb, `${discipline.name}.xlsx`);
     };
 
@@ -153,26 +194,32 @@ export default function NominacionesPage() {
         return players;
     };
 
-    const validateAllDuplicates = (teams: ParsedTeam[], parentDisciplineId: string): ParsedTeam[] => {
+    // --- LÓGICA CAMBIADA: Valida la vista previa comparando con la misma SUBDISCIPLINA ---
+    const validateAllDuplicates = (teams: ParsedTeam[]): ParsedTeam[] => {
         if (!selectedClassroomId) return teams;
-        const dbTeamsInDiscipline = savedTeams.filter(t => t.subDiscipline.disciplineId === parentDisciplineId);
-        const existingDnis = new Map<string, string>();
-
-        dbTeamsInDiscipline.forEach(team => {
-            team.players.forEach((p: any) => {
-                existingDnis.set(p.player.dni, `Equipo ${team.letter} de ${team.subDiscipline.name}`);
-            });
-        });
-
-        const seenDnisInUpload = new Set<string>();
 
         return teams.map(team => {
+            // Buscamos si en la base de datos ya existe otro equipo (distinta letra) para esta misma subdisciplina
+            const dbTeamsInSameSubDiscipline = savedTeams.filter(t =>
+                t.subDisciplineId === team.subDisciplineId && t.letter !== selectedTeamLetter
+            );
+
+            const existingDnis = new Map<string, string>();
+
+            dbTeamsInSameSubDiscipline.forEach(t => {
+                t.players.forEach((p: any) => {
+                    existingDnis.set(p.player.dni, `Equipo ${t.letter}`);
+                });
+            });
+
+            const seenDnisInUpload = new Set<string>();
+
             const validatedPlayers = team.players.map(player => {
                 if (existingDnis.has(player.dni)) {
-                    return { ...player, rawStatus: "DUPLICATED" as const, duplicateMsg: `Ya juega en: ${existingDnis.get(player.dni)}` };
+                    return { ...player, rawStatus: "DUPLICATED" as const, duplicateMsg: `Advertencia: Ya juega en el ${existingDnis.get(player.dni)}` };
                 }
                 if (seenDnisInUpload.has(player.dni)) {
-                    return { ...player, rawStatus: "DUPLICATED" as const, duplicateMsg: "Repetido en este mismo Excel" };
+                    return { ...player, rawStatus: "DUPLICATED" as const, duplicateMsg: "Advertencia: Repetido en este Excel" };
                 }
                 seenDnisInUpload.add(player.dni);
                 return player;
@@ -226,7 +273,7 @@ export default function NominacionesPage() {
                 if (newParsedTeams.length === 0) {
                     alert(`No se encontraron hojas que coincidan con las categorías de ${matchedDiscipline.name}.`);
                 } else {
-                    setParsedTeams(validateAllDuplicates(newParsedTeams, matchedDiscipline.id));
+                    setParsedTeams(validateAllDuplicates(newParsedTeams)); // Llama sin el segundo parámetro
                 }
             }
         };
@@ -260,17 +307,11 @@ export default function NominacionesPage() {
             players
         };
 
-        setParsedTeams(validateAllDuplicates([newTeam], parentDiscipline.id));
+        setParsedTeams(validateAllDuplicates([newTeam])); // Llama sin el segundo parámetro
     };
 
     const handleSaveBulk = async () => {
         if (!selectedClassroomId || parsedTeams.length === 0) return;
-
-        const hasDuplicates = parsedTeams.some(team => team.players.some(p => p.rawStatus === "DUPLICATED"));
-        if (hasDuplicates) {
-            alert("Corrige los jugadores duplicados marcados en ROJO antes de guardar.");
-            return;
-        }
 
         setIsSaving(true);
         try {
@@ -294,8 +335,15 @@ export default function NominacionesPage() {
                 fetchSavedTeams(selectedClassroomId);
             } else {
                 const err = await res.json();
-                alert(err.error || "Error al guardar");
-                if (err.details) alert(err.details.join("\n"));
+                if (err.error === "Jugadores duplicados detectados") {
+                    alert("Se guardaron los datos, pero ten en cuenta que hay jugadores repetidos en otros equipos de la misma categoría.");
+                    setParsedTeams([]);
+                    setPasteData("");
+                    fetchSavedTeams(selectedClassroomId);
+                } else {
+                    alert(err.error || "Error al guardar");
+                    if (err.details) alert(err.details.join("\n"));
+                }
             }
         } catch (error) {
             console.error(error);
@@ -357,7 +405,7 @@ export default function NominacionesPage() {
         }
     };
 
-    const groupedForPrint = savedTeams.reduce((acc, team) => {
+    const groupedForPrint = annotatedSavedTeams.reduce((acc, team) => {
         const audience = team.subDiscipline.discipline.audience;
         const discName = team.subDiscipline.discipline.name;
 
@@ -370,8 +418,11 @@ export default function NominacionesPage() {
 
     const selectedClassroomName = classrooms.find(c => c.id === selectedClassroomId)?.name || "Aula";
 
+    const hasWarnings = parsedTeams.some(team => team.players.some(p => p.rawStatus === "DUPLICATED"));
+
     return (
         <div className="min-h-screen bg-gray-50">
+            {/* === SECCIÓN DE INTERFAZ NORMAL (NO SE IMPRIME) === */}
             <div className="p-6 print:hidden">
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
                     <div>
@@ -380,7 +431,7 @@ export default function NominacionesPage() {
                     </div>
                     <button
                         onClick={() => window.print()}
-                        disabled={savedTeams.length === 0}
+                        disabled={annotatedSavedTeams.length === 0}
                         className="bg-gray-900 hover:bg-black text-white px-6 py-2.5 rounded-xl font-bold shadow-lg flex items-center gap-2 transition-transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
@@ -439,7 +490,6 @@ export default function NominacionesPage() {
                                 </label>
                             </div>
 
-                            {/* SECCIÓN NUEVA: DESCARGAR PLANTILLAS */}
                             {disciplines.length > 0 && (
                                 <div className="mb-6 bg-indigo-50/50 p-4 rounded-xl border border-indigo-100">
                                     <p className="text-[11px] font-black text-indigo-800 uppercase tracking-wider mb-2">📥 Descargar Plantillas Base:</p>
@@ -472,9 +522,14 @@ export default function NominacionesPage() {
                             ></textarea>
 
                             <div className="mt-6 flex flex-col gap-3">
+                                {hasWarnings && (
+                                    <p className="text-xs text-orange-600 font-bold bg-orange-50 p-2 rounded-lg text-center border border-orange-200">
+                                        ⚠️ Jugadores en otro equipo de esta categoría. Puedes guardar y editarlos más tarde si es necesario.
+                                    </p>
+                                )}
                                 <button
                                     onClick={handleSaveBulk}
-                                    disabled={isSaving || parsedTeams.length === 0 || !selectedClassroomId || parsedTeams.some(t => t.players.some(p => p.rawStatus === "DUPLICATED"))}
+                                    disabled={isSaving || parsedTeams.length === 0 || !selectedClassroomId}
                                     className="w-full bg-green-600 hover:bg-green-700 text-white px-5 py-3 rounded-lg font-black shadow-md disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-widest text-sm transition-transform active:scale-95"
                                 >
                                     {isSaving ? "Guardando..." : "Guardar Vista Previa"}
@@ -484,7 +539,7 @@ export default function NominacionesPage() {
                     </div>
 
                     <div className="xl:col-span-2 space-y-6">
-                        {/* VISTA PREVIA */}
+                        {/* VISTA PREVIA (NO SE IMPRIME) */}
                         {parsedTeams.length > 0 && (
                             <div className="bg-white rounded-2xl shadow-sm border-2 border-indigo-200 overflow-hidden flex flex-col">
                                 <div className="bg-indigo-600 text-white p-4 shrink-0 flex justify-between items-center">
@@ -510,8 +565,8 @@ export default function NominacionesPage() {
                                                 </thead>
                                                 <tbody className="divide-y divide-gray-100">
                                                     {team.players.map((p, pIdx) => (
-                                                        <tr key={pIdx} className={p.rawStatus === 'DUPLICATED' ? 'bg-red-50' : 'bg-white'}>
-                                                            <td className={`p-3 font-mono font-bold ${p.rawStatus === 'DUPLICATED' ? 'text-red-700' : 'text-gray-700'}`}>{p.dni}</td>
+                                                        <tr key={pIdx} className={p.rawStatus === 'DUPLICATED' ? 'bg-orange-50' : 'bg-white'}>
+                                                            <td className={`p-3 font-mono font-bold ${p.rawStatus === 'DUPLICATED' ? 'text-orange-700' : 'text-gray-700'}`}>{p.dni}</td>
                                                             <td className="p-3 font-bold text-gray-900">{p.lastName}, {p.firstName}</td>
                                                             <td className="p-3 text-center font-bold text-gray-600">{p.gender}</td>
                                                             <td className="p-3 text-center">
@@ -522,7 +577,7 @@ export default function NominacionesPage() {
                                                             <td className="p-3 text-center font-black text-indigo-600">{p.jerseyNumber || '-'}</td>
                                                             <td className="p-3 text-center font-bold">
                                                                 {p.rawStatus === "DUPLICATED" ? (
-                                                                    <span className="text-[10px] text-red-600 bg-red-100 px-2 py-1 rounded block">{p.duplicateMsg}</span>
+                                                                    <span className="text-[10px] text-orange-800 bg-orange-200 px-2 py-1 rounded block whitespace-normal">{p.duplicateMsg}</span>
                                                                 ) : <span className="text-indigo-600">✓ Listo</span>}
                                                             </td>
                                                         </tr>
@@ -535,7 +590,7 @@ export default function NominacionesPage() {
                             </div>
                         )}
 
-                        {/* DATOS GUARDADOS */}
+                        {/* DATOS GUARDADOS EN VIVO (Muestra duplicados) */}
                         <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden flex flex-col">
                             <div className="bg-gray-900 text-white p-4 shrink-0 flex justify-between items-center">
                                 <h3 className="font-black text-lg">Nóminas Oficiales Guardadas</h3>
@@ -544,13 +599,13 @@ export default function NominacionesPage() {
                             <div className="p-4 space-y-6">
                                 {isLoadingTeams ? (
                                     <p className="text-center font-bold text-gray-500 py-10">Cargando nóminas...</p>
-                                ) : savedTeams.length === 0 ? (
+                                ) : annotatedSavedTeams.length === 0 ? (
                                     <div className="h-40 flex flex-col items-center justify-center text-gray-400">
                                         <svg className="w-10 h-10 mb-2 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
                                         <p className="font-bold">No hay equipos registrados en este salón.</p>
                                     </div>
                                 ) : (
-                                    savedTeams.map((team: any) => (
+                                    annotatedSavedTeams.map((team: any) => (
                                         <div key={team.id} className="border border-gray-300 rounded-xl overflow-hidden shadow-sm">
                                             <div className="bg-gray-100 px-4 py-3 border-b border-gray-300 flex justify-between items-center">
                                                 <div>
@@ -575,11 +630,16 @@ export default function NominacionesPage() {
                                                 </thead>
                                                 <tbody className="divide-y divide-gray-100">
                                                     {team.players.map((tp: any, idx: number) => (
-                                                        <tr key={tp.id} className="hover:bg-gray-50 transition-colors">
+                                                        <tr key={tp.id} className={`${tp.isDuplicated ? 'bg-orange-50' : 'hover:bg-gray-50'} transition-colors`}>
                                                             <td className="p-3 font-bold text-gray-400">{idx + 1}</td>
                                                             <td className="p-3">
                                                                 <div className="font-mono text-xs text-gray-500">{tp.player.dni}</div>
                                                                 <div className="font-bold text-gray-900">{tp.player.lastName}, {tp.player.firstName}</div>
+                                                                {tp.isDuplicated && (
+                                                                    <div className="text-[10px] text-orange-800 bg-orange-200 px-2 py-1 rounded mt-1 inline-block whitespace-normal max-w-xs">
+                                                                        {tp.duplicateMsg}
+                                                                    </div>
+                                                                )}
                                                             </td>
                                                             <td className="p-3 text-center font-bold text-gray-600">{tp.player.gender}</td>
                                                             <td className="p-3 text-center">
@@ -589,10 +649,10 @@ export default function NominacionesPage() {
                                                             </td>
                                                             <td className="p-3 text-center font-black text-indigo-600">{tp.jerseyNumber || '-'}</td>
                                                             <td className="p-3 text-center flex justify-center gap-3">
-                                                                <button onClick={() => setEditingPlayer(JSON.parse(JSON.stringify(tp)))} className="text-blue-500 hover:text-blue-700 transition-colors" title="Editar Jugador">
+                                                                <button onClick={() => setEditingPlayer(JSON.parse(JSON.stringify(tp)))} className="text-blue-500 hover:text-blue-700 transition-colors mt-2" title="Editar Jugador">
                                                                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
                                                                 </button>
-                                                                <button onClick={() => handleDeletePlayer(tp.id, tp.player.firstName)} className="text-red-400 hover:text-red-700 transition-colors" title="Quitar Jugador">
+                                                                <button onClick={() => handleDeletePlayer(tp.id, tp.player.firstName)} className="text-red-400 hover:text-red-700 transition-colors mt-2" title="Quitar Jugador">
                                                                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                                                                 </button>
                                                             </td>
@@ -609,9 +669,9 @@ export default function NominacionesPage() {
                 </div>
             </div>
 
-            {/* MODAL DE EDICIÓN */}
+            {/* === MODAL DE EDICIÓN === */}
             {editingPlayer && (
-                <div className="fixed inset-0 bg-black/60 z-50 flex justify-center items-center p-4">
+                <div className="fixed inset-0 bg-black/60 z-50 flex justify-center items-center p-4 print:hidden">
                     <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl">
                         <h2 className="text-xl font-black mb-4">Editar Jugador</h2>
                         <form onSubmit={handleUpdatePlayer} className="space-y-4">
@@ -665,65 +725,65 @@ export default function NominacionesPage() {
                 </div>
             )}
 
-            {/* VISTA IMPRESIÓN MEJORADA (Agrupada por Estudiantes / Padres) */}
-            <div className="hidden print:block bg-white text-black p-8">
-                <div className="text-center mb-8 border-b-2 border-black pb-4">
-                    <h1 className="text-2xl font-black uppercase mb-1">Reporte Oficial de Nóminas</h1>
-                    <h2 className="text-xl font-bold">Salón: {selectedClassroomName}</h2>
-                    <p className="text-sm font-medium mt-2">Colegio Unión Internacional - Campeonato Deportivo 2026</p>
+            {/* === VISTA EXCLUSIVA PARA IMPRESIÓN (SIN ESPACIOS GIGANTES) === */}
+            <div className="hidden print:block bg-white text-black w-full text-xs">
+                <div className="text-center mb-4 border-b-2 border-black pb-2">
+                    <h1 className="text-xl font-black uppercase mb-1">Reporte Oficial de Nóminas</h1>
+                    <h2 className="text-lg font-bold">Salón: {selectedClassroomName}</h2>
+                    <p className="text-[10px] font-medium mt-1">Colegio Unión Internacional - Campeonato Deportivo 2026</p>
                 </div>
 
-                {savedTeams.length === 0 ? (
+                {annotatedSavedTeams.length === 0 ? (
                     <p className="text-center italic font-bold">No hay nóminas registradas para este salón.</p>
                 ) : (
-                    <div className="space-y-12">
+                    <div className="space-y-4">
                         {(Object.entries(groupedForPrint) as [string, Record<string, any[]>][]).map(([audience, disciplinesObj]) => (
-                            <div key={audience} className="break-inside-avoid">
-                                <h2 className="text-2xl font-black text-center bg-gray-800 text-white py-2 mb-6 uppercase tracking-widest border-2 border-black">
+                            <div key={audience} className="mb-4">
+                                <h2 className="text-lg font-black text-center bg-gray-200 border-t-2 border-b-2 border-black py-1 mb-2 uppercase tracking-widest break-after-avoid">
                                     CATEGORÍA: {audience}
                                 </h2>
 
                                 {(Object.entries(disciplinesObj) as [string, any[]][]).map(([discName, teamsArr]) => (
-                                    <div key={discName} className="mb-8">
-                                        <h3 className="text-lg font-black uppercase bg-gray-200 p-2 border-l-4 border-black mb-4">
-                                            Disciplina: {discName}
+                                    <div key={discName} className="mb-3">
+                                        <h3 className="text-sm font-black uppercase underline mb-1 ml-2 break-after-avoid">
+                                            {discName}
                                         </h3>
-                                        <div className="space-y-6">
+                                        <div className="space-y-3">
                                             {teamsArr.map((team: any) => (
-                                                <div key={team.id} className="pl-4 break-inside-avoid">
-                                                    <h4 className="text-md font-bold mb-2 underline decoration-2 underline-offset-4">
-                                                        Subcategoría: {team.subDiscipline.name} - Equipo {team.letter}
+                                                <div key={team.id} className="pl-4 break-inside-avoid mb-2">
+                                                    <h4 className="text-[11px] font-bold mb-1">
+                                                        ▶ {team.subDiscipline.name} - Equipo {team.letter}
                                                     </h4>
                                                     {team.players.length === 0 ? (
-                                                        <p className="text-sm italic text-gray-600 ml-4">Nómina no registrada.</p>
+                                                        <p className="text-[10px] italic ml-4">Sin nómina.</p>
                                                     ) : (
-                                                        <table className="w-full text-xs border-collapse border border-gray-400 ml-4 mt-2">
+                                                        <table className="w-full text-[10px] border-collapse border border-gray-600 mb-1">
                                                             <thead>
                                                                 <tr className="bg-gray-100">
-                                                                    <th className="border border-gray-400 p-2 text-center w-10">Nº</th>
-                                                                    <th className="border border-gray-400 p-2 text-center w-20">DNI</th>
-                                                                    <th className="border border-gray-400 p-2 text-left">Apellidos y Nombres</th>
-                                                                    <th className="border border-gray-400 p-2 text-center w-10">Gen</th>
-                                                                    <th className="border border-gray-400 p-2 text-center w-16">Dorsal</th>
-                                                                    <th className="border border-gray-400 p-2 text-center w-20">Condición</th>
-                                                                    <th className="border border-gray-400 p-2 text-center w-24">Firma (Asistencia)</th>
+                                                                    <th className="border border-gray-400 py-1 px-1 text-center w-6">Nº</th>
+                                                                    <th className="border border-gray-400 py-1 px-1 text-center w-14">DNI</th>
+                                                                    <th className="border border-gray-400 py-1 px-2 text-left">Apellidos y Nombres</th>
+                                                                    <th className="border border-gray-400 py-1 px-1 text-center w-6">Gen</th>
+                                                                    <th className="border border-gray-400 py-1 px-1 text-center w-10">Dorsal</th>
+                                                                    <th className="border border-gray-400 py-1 px-1 text-center w-14">Condición</th>
+                                                                    <th className="border border-gray-400 py-1 px-2 text-center w-20">Firma</th>
                                                                 </tr>
                                                             </thead>
                                                             <tbody>
                                                                 {team.players.map((p: any, idx: number) => (
                                                                     <tr key={p.id}>
-                                                                        <td className="border border-gray-400 p-2 font-bold text-center">{idx + 1}</td>
-                                                                        <td className="border border-gray-400 p-2 text-center">{p.player.dni}</td>
-                                                                        <td className="border border-gray-400 p-2 font-bold">
+                                                                        <td className="border border-gray-400 py-1 px-1 font-bold text-center">{idx + 1}</td>
+                                                                        <td className="border border-gray-400 py-1 px-1 text-center">{p.player.dni}</td>
+                                                                        <td className="border border-gray-400 py-1 px-2 font-bold">
                                                                             {p.player.lastName}, {p.player.firstName}
                                                                             {p.player.isParent ? " (P)" : ""}
                                                                         </td>
-                                                                        <td className="border border-gray-400 p-2 text-center">{p.player.gender}</td>
-                                                                        <td className="border border-gray-400 p-2 text-center font-black text-gray-600">{p.jerseyNumber || "-"}</td>
-                                                                        <td className="border border-gray-400 p-2 text-center font-bold">
+                                                                        <td className="border border-gray-400 py-1 px-1 text-center">{p.player.gender}</td>
+                                                                        <td className="border border-gray-400 py-1 px-1 text-center font-bold">{p.jerseyNumber || "-"}</td>
+                                                                        <td className="border border-gray-400 py-1 px-1 text-center">
                                                                             {p.isStarter ? "Titular" : "Suplente"}
                                                                         </td>
-                                                                        <td className="border border-gray-400 p-2 text-center"></td>
+                                                                        <td className="border border-gray-400 py-1 px-2"></td>
                                                                     </tr>
                                                                 ))}
                                                             </tbody>
@@ -738,14 +798,15 @@ export default function NominacionesPage() {
                         ))}
                     </div>
                 )}
-                <div className="mt-20 flex justify-around print:flex break-inside-avoid">
+
+                <div className="mt-8 flex justify-around print:flex break-inside-avoid">
                     <div className="text-center">
-                        <div className="w-56 border-t border-black mb-2 mx-auto"></div>
-                        <p className="text-sm font-bold">Firma del Delegado(a)</p>
+                        <div className="w-48 border-t border-black mb-1 mx-auto"></div>
+                        <p className="text-[10px] font-bold">Firma del Delegado(a)</p>
                     </div>
                     <div className="text-center">
-                        <div className="w-56 border-t border-black mb-2 mx-auto"></div>
-                        <p className="text-sm font-bold">V°B° Comisión Organizadora</p>
+                        <div className="w-48 border-t border-black mb-1 mx-auto"></div>
+                        <p className="text-[10px] font-bold">V°B° Comisión Organizadora</p>
                     </div>
                 </div>
             </div>
