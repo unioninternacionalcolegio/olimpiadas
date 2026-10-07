@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 
+// Tipos actualizados para incluir el classroomId y la relación classroom
 type User = {
     id: string;
     name: string;
@@ -9,17 +10,25 @@ type User = {
     dni: string;
     phone: string;
     role: string;
+    classroomId: string | null;
+    classroom?: { id: string, name: string } | null;
+};
+
+type Classroom = {
+    id: string;
+    name: string;
 };
 
 export default function UsuariosConfigPage() {
     const [users, setUsers] = useState<User[]>([]);
+    const [classrooms, setClassrooms] = useState<Classroom[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [message, setMessage] = useState({ type: "", text: "" });
 
-    // Estado para saber si estamos editando
     const [editingId, setEditingId] = useState<string | null>(null);
 
+    // Estado formData actualizado
     const [formData, setFormData] = useState({
         name: "",
         dni: "",
@@ -27,29 +36,39 @@ export default function UsuariosConfigPage() {
         username: "",
         password: "",
         role: "DELEGADO",
+        classroomId: "", // Añadido para el aula
     });
 
-    const fetchUsers = async () => {
+    // Cargar usuarios y aulas en paralelo
+    const fetchData = async () => {
         try {
-            const res = await fetch("/api/users");
-            if (res.ok) {
-                const data = await res.json();
-                setUsers(data);
-            }
+            const [usersRes, classroomsRes] = await Promise.all([
+                fetch("/api/users"),
+                fetch("/api/classrooms")
+            ]);
+
+            if (usersRes.ok) setUsers(await usersRes.json());
+            if (classroomsRes.ok) setClassrooms(await classroomsRes.json());
         } catch (error) {
-            console.error("Error al cargar usuarios:", error);
+            console.error("Error al cargar datos:", error);
         } finally {
             setIsLoading(false);
         }
     };
 
     useEffect(() => {
-        fetchUsers();
+        fetchData();
     }, []);
 
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
         const { name, value } = e.target;
-        setFormData((prev) => ({ ...prev, [name]: value }));
+
+        // Si cambia de rol y ya no es asesor/delegado, limpiamos el classroomId
+        if (name === "role" && value !== "ASESOR" && value !== "DELEGADO") {
+            setFormData((prev) => ({ ...prev, role: value, classroomId: "" }));
+        } else {
+            setFormData((prev) => ({ ...prev, [name]: value }));
+        }
     };
 
     const resetForm = () => {
@@ -60,12 +79,20 @@ export default function UsuariosConfigPage() {
             username: "",
             password: "",
             role: "DELEGADO",
+            classroomId: "",
         });
         setEditingId(null);
     };
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+
+        // Validación: Si es Asesor o Delegado, DEBE tener un aula
+        if ((formData.role === "ASESOR" || formData.role === "DELEGADO") && !formData.classroomId) {
+            setMessage({ type: "error", text: "Los asesores y delegados deben estar asignados a un aula." });
+            return;
+        }
+
         setIsSubmitting(true);
         setMessage({ type: "", text: "" });
 
@@ -73,10 +100,16 @@ export default function UsuariosConfigPage() {
             const url = editingId ? `/api/users/${editingId}` : "/api/users";
             const method = editingId ? "PUT" : "POST";
 
+            // Asegurarnos de enviar null si el campo está vacío
+            const payload = {
+                ...formData,
+                classroomId: formData.classroomId || null
+            };
+
             const res = await fetch(url, {
                 method,
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(formData),
+                body: JSON.stringify(payload),
             });
 
             const data = await res.json();
@@ -91,7 +124,7 @@ export default function UsuariosConfigPage() {
             });
 
             resetForm();
-            fetchUsers();
+            fetchData();
         } catch (error: any) {
             setMessage({ type: "error", text: error.message });
         } finally {
@@ -107,10 +140,10 @@ export default function UsuariosConfigPage() {
             dni: user.dni,
             phone: user.phone,
             username: user.username,
-            password: "", // Se deja vacío intencionalmente para no sobreescribir si no escriben nada
+            password: "",
             role: user.role,
+            classroomId: user.classroomId || "",
         });
-        // Hacer scroll hacia arriba para ver el formulario
         window.scrollTo({ top: 0, behavior: "smooth" });
     };
 
@@ -128,11 +161,8 @@ export default function UsuariosConfigPage() {
             }
 
             setMessage({ type: "success", text: "Usuario eliminado correctamente" });
-
-            // Si estaba editando al usuario eliminado, limpiar el form
             if (editingId === id) resetForm();
-
-            fetchUsers();
+            fetchData();
         } catch (error: any) {
             setMessage({ type: "error", text: error.message });
         }
@@ -142,7 +172,7 @@ export default function UsuariosConfigPage() {
         <div className="max-w-6xl mx-auto space-y-8">
             <div>
                 <h1 className="text-3xl font-bold text-gray-800">Gestión de Usuarios</h1>
-                <p className="text-gray-600 mt-1">Crea, edita y elimina accesos para el sistema.</p>
+                <p className="text-gray-600 mt-1">Crea, edita y asigna roles/aulas para el sistema.</p>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -213,6 +243,25 @@ export default function UsuariosConfigPage() {
                             </select>
                         </div>
 
+                        {/* EL NUEVO CAMPO QUE APARECE SOLO SI ES ASESOR O DELEGADO */}
+                        {(formData.role === "ASESOR" || formData.role === "DELEGADO") && (
+                            <div className="p-3 bg-blue-50 border border-blue-200 rounded-md mt-2">
+                                <label className="block text-sm font-bold text-blue-900 mb-1">Aula Asignada (Obligatorio)</label>
+                                <select
+                                    name="classroomId"
+                                    value={formData.classroomId}
+                                    onChange={handleInputChange}
+                                    required
+                                    className="w-full px-3 py-2 border border-blue-300 rounded-md focus:ring-blue-600 focus:border-blue-600 text-black bg-white"
+                                >
+                                    <option value="">-- Selecciona el Aula --</option>
+                                    {classrooms.map((c) => (
+                                        <option key={c.id} value={c.id}>{c.name}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
+
                         <hr className="my-4" />
 
                         <div>
@@ -237,7 +286,7 @@ export default function UsuariosConfigPage() {
                                 value={formData.password}
                                 onChange={handleInputChange}
                                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-black"
-                                required={!editingId} // Solo es obligatoria si estamos creando
+                                required={!editingId}
                             />
                         </div>
 
@@ -276,8 +325,8 @@ export default function UsuariosConfigPage() {
                                     <tr>
                                         <th className="px-4 py-3 font-semibold rounded-tl-md">Nombres</th>
                                         <th className="px-4 py-3 font-semibold">Usuario</th>
-                                        <th className="px-4 py-3 font-semibold">DNI / Cel</th>
                                         <th className="px-4 py-3 font-semibold">Rol</th>
+                                        <th className="px-4 py-3 font-semibold">Aula Asignada</th>
                                         <th className="px-4 py-3 font-semibold text-right rounded-tr-md">Acciones</th>
                                     </tr>
                                 </thead>
@@ -291,11 +340,11 @@ export default function UsuariosConfigPage() {
                                     ) : (
                                         users.map((user) => (
                                             <tr key={user.id} className="hover:bg-gray-50">
-                                                <td className="px-4 py-3 font-medium">{user.name}</td>
-                                                <td className="px-4 py-3">{user.username}</td>
-                                                <td className="px-4 py-3">
-                                                    {user.dni} <br /> <span className="text-xs text-gray-500">{user.phone}</span>
+                                                <td className="px-4 py-3 font-medium">
+                                                    {user.name} <br />
+                                                    <span className="text-xs font-normal text-gray-500">DNI: {user.dni} | Cel: {user.phone}</span>
                                                 </td>
+                                                <td className="px-4 py-3 font-mono text-gray-600">{user.username}</td>
                                                 <td className="px-4 py-3">
                                                     <span className={`px-2 py-1 rounded text-xs font-bold
                             ${user.role === 'ADMIN' ? 'bg-red-100 text-red-700' : ''}
@@ -305,6 +354,9 @@ export default function UsuariosConfigPage() {
                           `}>
                                                         {user.role}
                                                     </span>
+                                                </td>
+                                                <td className="px-4 py-3 font-bold text-gray-700">
+                                                    {user.classroom ? user.classroom.name : <span className="text-gray-400 italic">No aplica</span>}
                                                 </td>
                                                 <td className="px-4 py-3 text-right space-x-2">
                                                     <button

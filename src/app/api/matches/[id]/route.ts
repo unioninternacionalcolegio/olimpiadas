@@ -1,14 +1,18 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 
-// El cálculo ahora agrupa por stageId
+// ==========================================================
+// FUNCIÓN PARA RECALCULAR LA TABLA GLOBAL DEL SALÓN EN BD
+// ==========================================================
 async function recalculateRanking(classroomId: string, subDisciplineId: string, stageId: string) {
     const homeMatches = await prisma.match.findMany({
         where: { homeTeam: { classroomId }, subDisciplineId, stageId, status: "FINALIZADO" }
     });
+
     const awayMatches = await prisma.match.findMany({
         where: { awayTeam: { classroomId }, subDisciplineId, stageId, status: "FINALIZADO" }
     });
+
     const competitions = await prisma.matchCompetitor.findMany({
         where: { team: { classroomId }, match: { subDisciplineId, stageId, status: "FINALIZADO" } }
     });
@@ -40,11 +44,25 @@ async function recalculateRanking(classroomId: string, subDisciplineId: string, 
                 classroomId,
             }
         },
-        update: { points: totalPoints, goalsFor: totalGoalsFor, goalsAgainst: totalGoalsAgainst },
-        create: { subDisciplineId, stageId, classroomId, points: totalPoints, goalsFor: totalGoalsFor, goalsAgainst: totalGoalsAgainst }
+        update: {
+            points: totalPoints,
+            goalsFor: totalGoalsFor,
+            goalsAgainst: totalGoalsAgainst
+        },
+        create: {
+            subDisciplineId,
+            stageId,
+            classroomId,
+            points: totalPoints,
+            goalsFor: totalGoalsFor,
+            goalsAgainst: totalGoalsAgainst
+        }
     });
 }
 
+// ==========================================================
+// ACTUALIZAR PARTIDO Y RESULTADOS (PUT)
+// ==========================================================
 export async function PUT(request: Request, { params }: { params: Promise<{ id: string }> }) {
     try {
         const { id } = await params;
@@ -54,7 +72,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
         const match = await prisma.match.findUnique({
             where: { id },
             include: {
-                stage: true, // OBTENER LOS PUNTAJES DE ESTA ETAPA
+                stage: true,
                 subDiscipline: true,
                 homeTeam: true,
                 awayTeam: true,
@@ -64,6 +82,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
 
         if (!match) return NextResponse.json({ error: "Partido no encontrado" }, { status: 404 });
 
+        // --- LÓGICA PARA FULBITO, VÓLEY, ETC (1vs1) ---
         if (format === "ENFRENTAMIENTO") {
             const { homeScore, awayScore } = body;
 
@@ -73,16 +92,16 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
 
             if (status === "FINALIZADO" || status === "WALKOVER") {
                 if (homeScore > awayScore) {
-                    homeTablePts = match.stage.pointsForWin; // AHORA LEE DE LA ETAPA
+                    homeTablePts = match.stage.pointsForWin;
                     awayTablePts = match.stage.pointsForLoss;
                     winnerId = match.homeTeamId;
                 } else if (awayScore > homeScore) {
                     homeTablePts = match.stage.pointsForLoss;
-                    awayTablePts = match.stage.pointsForWin; // AHORA LEE DE LA ETAPA
+                    awayTablePts = match.stage.pointsForWin;
                     winnerId = match.awayTeamId;
                 } else {
                     homeTablePts = match.stage.pointsForTie;
-                    awayTablePts = match.stage.pointsForTie; // AHORA LEE DE LA ETAPA
+                    awayTablePts = match.stage.pointsForTie;
                 }
             }
 
@@ -95,6 +114,8 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
                 if (match.homeTeam?.classroomId) await recalculateRanking(match.homeTeam.classroomId, match.subDisciplineId, match.stageId);
                 if (match.awayTeam?.classroomId) await recalculateRanking(match.awayTeam.classroomId, match.subDisciplineId, match.stageId);
             }
+
+            // --- LÓGICA PARA ATLETISMO (Carreras y Múltiples Competidores) ---
         } else if (format === "COMPETENCIA") {
             const { competitorsData } = body;
 
@@ -111,6 +132,8 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
                             score: Number(comp.score) || 0,
                             position: comp.position ? Number(comp.position) : null,
                             points: Number(comp.points) || 0,
+                            // CORRECCIÓN PARA EL BUILD: playerId en vez de playerName
+                            playerId: comp.playerId || null
                         }
                     });
                 }
@@ -127,10 +150,13 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
 
     } catch (error) {
         console.error("Error updating match:", error);
-        return NextResponse.json({ error: "Error al actualizar el partido" }, { status: 500 });
+        return NextResponse.json({ error: "Error al actualizar el evento" }, { status: 500 });
     }
 }
 
+// ==========================================================
+// ELIMINAR PARTIDO (DELETE)
+// ==========================================================
 export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
     try {
         const { id } = await params;

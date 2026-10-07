@@ -196,7 +196,10 @@ model TeamPlayer {
   playerId  String
   player    Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
   
-  isStarter Boolean  @default(true) // true = Titular, false = Suplente
+  isStarter Boolean  @default(true) 
+  
+  // NUEVO: Agrega solo esta línea. Al tener "?" no te pedirá borrar la BD ni romperá tus datos actuales.
+  jerseyNumber String? 
   
   @@unique([teamId, playerId]) 
 }

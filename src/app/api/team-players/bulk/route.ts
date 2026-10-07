@@ -130,6 +130,7 @@ export async function POST(request: Request) {
                             teamId: team.id,
                             playerId: player.id,
                             isStarter: row.isStarter,
+                            jerseyNumber: row.jerseyNumber || null,
                         }
                     });
                 }

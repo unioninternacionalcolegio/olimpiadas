@@ -10,23 +10,24 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
             return NextResponse.json({ error: "No autorizado" }, { status: 403 });
         }
 
-        const { id } = await params; // id del TeamPlayer
-        const { firstName, lastName, gender, isParent, isStarter } = await request.json();
+        const { id } = await params;
+        // CORRECCIÓN: Agregamos jerseyNumber en la desestructuración
+        const { firstName, lastName, gender, isParent, isStarter, jerseyNumber } = await request.json();
 
-        // Buscar la relación
         const teamPlayer = await prisma.teamPlayer.findUnique({ where: { id } });
         if (!teamPlayer) return NextResponse.json({ error: "Registro no encontrado" }, { status: 404 });
 
-        // Actualizar datos personales del jugador
         await prisma.player.update({
             where: { id: teamPlayer.playerId },
             data: { firstName, lastName, gender, isParent: Boolean(isParent) }
         });
 
-        // Actualizar si es titular o suplente
         const updatedTeamPlayer = await prisma.teamPlayer.update({
             where: { id },
-            data: { isStarter: Boolean(isStarter) },
+            data: {
+                isStarter: Boolean(isStarter),
+                jerseyNumber: jerseyNumber || null
+            },
             include: { player: true }
         });
 
