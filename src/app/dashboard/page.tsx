@@ -59,6 +59,10 @@ export default async function DashboardPage() {
                                 <h2 className="text-xl font-bold text-teal-800">Mi Nómina</h2>
                                 <p className="text-teal-600 mt-2">Revisa a los titulares y suplentes de tus equipos.</p>
                             </Link>
+                            <Link href="/dashboard/aulas/nominas" className="block p-6 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition">
+                                <h2 className="text-xl font-bold text-red-800">PARTICIPANTES</h2>
+                                <p className="text-red-600 mt-2">TOTAL DE PARTICIPANTES DEL DIA DE LA FAMILIA.</p>
+                            </Link>
                         </>
                     )}
                 </div>

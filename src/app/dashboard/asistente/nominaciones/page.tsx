@@ -619,7 +619,7 @@ export default function NominacionesPage() {
                                                                 {/* ETIQUETA PADRE/ADOPTIVO */}
                                                                 {tp.player.isParent && (
                                                                     <div className={`text-[10px] px-2 py-0.5 rounded mt-1 inline-block font-black tracking-wide ${tp.isAdoptive ? 'bg-orange-200 text-orange-900 border border-orange-400' : 'bg-green-200 text-green-900 border border-green-400'}`}>
-                                                                        {tp.isAdoptive ? '🤝 UNIÓN DE HECHO / P. ADOPTIVO' : '👨‍👦 PADRE BIOLÓGICO'}
+                                                                        {tp.isAdoptive ? 'PADRE' : 'PADRE'}
                                                                     </div>
                                                                 )}
 
@@ -774,7 +774,7 @@ export default function NominacionesPage() {
                                                                         <td className="border border-black py-1 px-1 text-center font-bold text-black">{tp.player.dni}</td>
                                                                         <td className="border border-black py-1 px-2 font-black text-black">
                                                                             {tp.player.lastName}, {tp.player.firstName}
-                                                                            {tp.player.isParent ? (tp.isAdoptive ? " [P.Adoptivo/Unión]" : " [Padre]") : ""}
+                                                                            {tp.player.isParent ? (tp.isAdoptive ? " [P.]" : " [Padre]") : ""}
                                                                         </td>
                                                                         <td className="border border-black py-1 px-1 text-center font-bold text-black">{tp.player.gender}</td>
                                                                         <td className="border border-black py-1 px-1 text-center font-black text-black">
