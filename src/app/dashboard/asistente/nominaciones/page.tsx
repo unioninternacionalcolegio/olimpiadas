@@ -66,20 +66,34 @@ export default function NominacionesPage() {
         }
     }, [selectedClassroomId]);
 
-    // --- LÓGICA CAMBIADA: Agrupar por SUB-DISCIPLINA para validar Equipo A vs Equipo B ---
+    // --- LÓGICA INTELIGENTE: Evaluar Duplicados, Apellidos y Otros Salones ---
     useEffect(() => {
         const newTeams = JSON.parse(JSON.stringify(savedTeams));
-        const subDisciplineMap = new Map();
 
+        // 1. Recolectar todos los apellidos de los ESTUDIANTES de este salón
+        const studentSurnames = new Set<string>();
+        newTeams.forEach((team: any) => {
+            team.players.forEach((tp: any) => {
+                if (!tp.player.isParent) {
+                    // Separar los apellidos (ej. "PEREZ GOMEZ" -> ["PEREZ", "GOMEZ"])
+                    const parts = tp.player.lastName.trim().split(/\s+/);
+                    parts.forEach((part: string) => studentSurnames.add(normalizeString(part)));
+                }
+            });
+        });
+
+        const subDisciplineMap = new Map();
         newTeams.forEach((team: any) => {
             const subId = team.subDisciplineId;
             if (!subDisciplineMap.has(subId)) subDisciplineMap.set(subId, []);
             subDisciplineMap.get(subId).push(team);
         });
 
+        // 2. Evaluar jugador por jugador
         subDisciplineMap.forEach((teamsInSubDisc: any[]) => {
             const dniToTeams = new Map<string, string[]>();
 
+            // Mapear DNIs en esta subdisciplina
             teamsInSubDisc.forEach((team) => {
                 team.players.forEach((p: any) => {
                     const dni = p.player.dni;
@@ -90,26 +104,47 @@ export default function NominacionesPage() {
             });
 
             teamsInSubDisc.forEach((team) => {
-                team.players.forEach((p: any) => {
-                    const dni = p.player.dni;
+                team.players.forEach((tp: any) => {
+                    const player = tp.player;
+                    const dni = player.dni;
+
+                    // A) Evaluar si está duplicado en A y B de esta subcategoría
                     const teamsWithDni = dniToTeams.get(dni);
                     if (teamsWithDni && teamsWithDni.length > 1) {
-                        p.isDuplicated = true;
+                        tp.isDuplicated = true;
                         const otherTeams = teamsWithDni.filter((t: string) => t !== `Equipo ${team.letter}`);
                         if (otherTeams.length > 0) {
-                            p.duplicateMsg = `Advertencia: Juega también en ${otherTeams.join(', ')}`;
+                            tp.duplicateMsg = `Doble inscripción: También en ${otherTeams.join(', ')}`;
                         } else {
-                            p.duplicateMsg = `Advertencia: DNI repetido en este mismo equipo`;
+                            tp.duplicateMsg = `DNI repetido en esta lista`;
                         }
                     } else {
-                        p.isDuplicated = false;
+                        tp.isDuplicated = false;
                     }
+
+                    // B) Inteligencia para PADRES: ¿Es Biológico o Unión de hecho?
+                    if (player.isParent) {
+                        const firstSurname = normalizeString(player.lastName.trim().split(/\s+/)[0]);
+                        // Si el primer apellido del padre no está en la lista de apellidos de alumnos = Adoptivo
+                        tp.isAdoptive = !studentSurnames.has(firstSurname);
+                    }
+
+                    // C) Inteligencia de OTROS SALONES
+                    const otherClassrooms = new Set<string>();
+                    if (player.teams && player.teams.length > 0) {
+                        player.teams.forEach((tJoin: any) => {
+                            if (tJoin.team.classroomId !== selectedClassroomId) {
+                                otherClassrooms.add(tJoin.team.classroom.name);
+                            }
+                        });
+                    }
+                    tp.otherClassrooms = Array.from(otherClassrooms);
                 });
             });
         });
 
         setAnnotatedSavedTeams(newTeams);
-    }, [savedTeams]);
+    }, [savedTeams, selectedClassroomId]);
 
     const fetchInitialData = async () => {
         try {
@@ -194,12 +229,10 @@ export default function NominacionesPage() {
         return players;
     };
 
-    // --- LÓGICA CAMBIADA: Valida la vista previa comparando con la misma SUBDISCIPLINA ---
     const validateAllDuplicates = (teams: ParsedTeam[]): ParsedTeam[] => {
         if (!selectedClassroomId) return teams;
 
         return teams.map(team => {
-            // Buscamos si en la base de datos ya existe otro equipo (distinta letra) para esta misma subdisciplina
             const dbTeamsInSameSubDiscipline = savedTeams.filter(t =>
                 t.subDisciplineId === team.subDisciplineId && t.letter !== selectedTeamLetter
             );
@@ -238,7 +271,6 @@ export default function NominacionesPage() {
 
         setPasteData("");
         const fileNameWithoutExt = file.name.replace(/\.[^/.]+$/, "");
-
         const matchedDiscipline = disciplines.find(d => normalizeString(d.name) === normalizeString(fileNameWithoutExt));
 
         if (!matchedDiscipline) {
@@ -273,7 +305,7 @@ export default function NominacionesPage() {
                 if (newParsedTeams.length === 0) {
                     alert(`No se encontraron hojas que coincidan con las categorías de ${matchedDiscipline.name}.`);
                 } else {
-                    setParsedTeams(validateAllDuplicates(newParsedTeams)); // Llama sin el segundo parámetro
+                    setParsedTeams(validateAllDuplicates(newParsedTeams));
                 }
             }
         };
@@ -307,7 +339,7 @@ export default function NominacionesPage() {
             players
         };
 
-        setParsedTeams(validateAllDuplicates([newTeam])); // Llama sin el segundo parámetro
+        setParsedTeams(validateAllDuplicates([newTeam]));
     };
 
     const handleSaveBulk = async () => {
@@ -336,7 +368,7 @@ export default function NominacionesPage() {
             } else {
                 const err = await res.json();
                 if (err.error === "Jugadores duplicados detectados") {
-                    alert("Se guardaron los datos, pero ten en cuenta que hay jugadores repetidos en otros equipos de la misma categoría.");
+                    alert("Se guardaron los datos, pero ten en cuenta que hay jugadores repetidos.");
                     setParsedTeams([]);
                     setPasteData("");
                     fetchSavedTeams(selectedClassroomId);
@@ -417,7 +449,6 @@ export default function NominacionesPage() {
     }, {} as Record<string, Record<string, any[]>>);
 
     const selectedClassroomName = classrooms.find(c => c.id === selectedClassroomId)?.name || "Aula";
-
     const hasWarnings = parsedTeams.some(team => team.players.some(p => p.rawStatus === "DUPLICATED"));
 
     return (
@@ -426,36 +457,36 @@ export default function NominacionesPage() {
             <div className="p-6 print:hidden">
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
                     <div>
-                        <h1 className="text-3xl font-black text-gray-900 tracking-tight">Gestión de Nóminas</h1>
-                        <p className="text-gray-600 text-sm font-medium mt-1">Sube un Excel (múltiples hojas) o gestiona las nóminas guardadas.</p>
+                        <h1 className="text-3xl font-black text-black tracking-tight">Gestión de Nóminas</h1>
+                        <p className="text-black text-sm font-medium mt-1">Sube un Excel (múltiples hojas) o gestiona las nóminas guardadas.</p>
                     </div>
                     <button
                         onClick={() => window.print()}
                         disabled={annotatedSavedTeams.length === 0}
-                        className="bg-gray-900 hover:bg-black text-white px-6 py-2.5 rounded-xl font-bold shadow-lg flex items-center gap-2 transition-transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="bg-black hover:bg-gray-800 text-white px-6 py-2.5 rounded-xl font-bold shadow-lg flex items-center gap-2 transition-transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
                         Imprimir Reportes
                     </button>
                 </div>
 
-                <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-200 mb-8 grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-300 mb-8 grid grid-cols-1 md:grid-cols-3 gap-6">
                     <div>
-                        <label className="block text-xs font-black text-gray-500 uppercase tracking-wider mb-2">1. Seleccionar Aula (Obligatorio)</label>
-                        <select className="w-full border-2 border-indigo-200 rounded-xl p-3 font-bold text-indigo-900 focus:border-indigo-600 bg-indigo-50/50" value={selectedClassroomId} onChange={(e) => setSelectedClassroomId(e.target.value)}>
+                        <label className="block text-xs font-black text-black uppercase tracking-wider mb-2">1. Seleccionar Aula (Obligatorio)</label>
+                        <select className="w-full border-2 border-indigo-200 rounded-xl p-3 font-bold text-black focus:border-indigo-600 bg-indigo-50/50" value={selectedClassroomId} onChange={(e) => setSelectedClassroomId(e.target.value)}>
                             <option value="">-- Seleccione un Salón --</option>
                             {classrooms.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                         </select>
                     </div>
 
                     <div>
-                        <label className="block text-xs font-black text-gray-500 uppercase tracking-wider mb-2">2. Categoría (Solo si pegas manual)</label>
-                        <select className="w-full border-2 border-indigo-200 rounded-xl p-3 font-bold text-indigo-900 focus:border-indigo-600 bg-indigo-50/50" value={selectedSubDisciplineId} onChange={(e) => setSelectedSubDisciplineId(e.target.value)}>
+                        <label className="block text-xs font-black text-black uppercase tracking-wider mb-2">2. Categoría (Solo si pegas manual)</label>
+                        <select className="w-full border-2 border-indigo-200 rounded-xl p-3 font-bold text-black focus:border-indigo-600 bg-indigo-50/50" value={selectedSubDisciplineId} onChange={(e) => setSelectedSubDisciplineId(e.target.value)}>
                             <option value="">-- Automático por Excel --</option>
                             {disciplines.map(d => (
-                                <optgroup key={d.id} label={`${d.name} (${d.audience})`} className="font-black text-gray-900">
+                                <optgroup key={d.id} label={`${d.name} (${d.audience})`} className="font-black text-black">
                                     {d.subDisciplines.map((s: any) => (
-                                        <option key={s.id} value={s.id} className="font-medium text-gray-700">{s.name}</option>
+                                        <option key={s.id} value={s.id} className="font-bold text-black">{s.name}</option>
                                     ))}
                                 </optgroup>
                             ))}
@@ -463,10 +494,10 @@ export default function NominacionesPage() {
                     </div>
 
                     <div>
-                        <label className="block text-xs font-black text-gray-500 uppercase tracking-wider mb-2">3. Letra del Equipo</label>
+                        <label className="block text-xs font-black text-black uppercase tracking-wider mb-2">3. Letra del Equipo</label>
                         <div className="flex gap-2">
                             {["A", "B", "C"].map(letter => (
-                                <label key={letter} className={`flex-1 cursor-pointer text-center px-4 py-3 border-2 rounded-xl font-black transition-colors ${selectedTeamLetter === letter ? 'bg-indigo-600 border-indigo-700 text-white shadow-md' : 'bg-white border-gray-200 text-gray-400 hover:border-indigo-300'}`}>
+                                <label key={letter} className={`flex-1 cursor-pointer text-center px-4 py-3 border-2 rounded-xl font-black transition-colors ${selectedTeamLetter === letter ? 'bg-indigo-600 border-indigo-700 text-white shadow-md' : 'bg-white border-gray-300 text-black hover:border-indigo-400'}`}>
                                     <input type="radio" name="teamLetter" value={letter} checked={selectedTeamLetter === letter} onChange={(e) => setSelectedTeamLetter(e.target.value)} className="hidden" />
                                     Equipo {letter}
                                 </label>
@@ -477,28 +508,28 @@ export default function NominacionesPage() {
 
                 <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
                     <div className="xl:col-span-1">
-                        <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-200 sticky top-6">
+                        <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-300 sticky top-6">
                             <div className="mb-6">
-                                <h3 className="font-black text-lg text-gray-900 mb-2">4. Subir Archivo Excel</h3>
-                                <p className="text-xs text-gray-500 mb-3 font-medium">Nombre archivo = Disciplina.<br />Nombre hoja = Subdisciplina.</p>
+                                <h3 className="font-black text-lg text-black mb-2">4. Subir Archivo Excel</h3>
+                                <p className="text-xs text-black mb-3 font-bold">Nombre archivo = Disciplina.<br />Nombre hoja = Subdisciplina.</p>
                                 <label className="flex items-center justify-center w-full h-16 px-4 transition bg-white border-2 border-indigo-300 border-dashed rounded-xl appearance-none cursor-pointer hover:border-indigo-600 hover:bg-indigo-50 focus:outline-none">
                                     <span className="flex items-center space-x-2 text-indigo-700 font-bold">
                                         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
-                                        <span>Seleccionar Excel (.xlsx)</span>
+                                        <span className="text-black">Seleccionar Excel (.xlsx)</span>
                                     </span>
                                     <input type="file" ref={fileInputRef} name="file_upload" className="hidden" accept=".xlsx, .xls, .csv" onChange={handleFileUpload} />
                                 </label>
                             </div>
 
                             {disciplines.length > 0 && (
-                                <div className="mb-6 bg-indigo-50/50 p-4 rounded-xl border border-indigo-100">
-                                    <p className="text-[11px] font-black text-indigo-800 uppercase tracking-wider mb-2">📥 Descargar Plantillas Base:</p>
+                                <div className="mb-6 bg-indigo-50/50 p-4 rounded-xl border border-indigo-200">
+                                    <p className="text-[11px] font-black text-indigo-900 uppercase tracking-wider mb-2">📥 Descargar Plantillas Base:</p>
                                     <div className="flex flex-wrap gap-2">
                                         {disciplines.map(d => (
                                             <button
                                                 key={d.id}
                                                 onClick={() => handleDownloadTemplate(d)}
-                                                className="text-[10px] bg-white text-indigo-700 hover:bg-indigo-600 hover:text-white border border-indigo-200 px-2.5 py-1.5 rounded-lg font-bold shadow-sm transition-all"
+                                                className="text-[10px] bg-white text-indigo-800 hover:bg-indigo-600 hover:text-white border border-indigo-300 px-2.5 py-1.5 rounded-lg font-bold shadow-sm transition-all"
                                                 title={`Descargar plantilla para ${d.name}`}
                                             >
                                                 {d.name} ({d.audience.charAt(0)})
@@ -509,13 +540,13 @@ export default function NominacionesPage() {
                             )}
 
                             <div className="flex items-center mb-6">
-                                <div className="flex-grow border-t border-gray-300"></div>
-                                <span className="flex-shrink-0 mx-4 text-gray-400 font-bold text-xs">O PEGAR MANUALMENTE</span>
-                                <div className="flex-grow border-t border-gray-300"></div>
+                                <div className="flex-grow border-t border-gray-400"></div>
+                                <span className="flex-shrink-0 mx-4 text-black font-black text-xs">O PEGAR MANUALMENTE</span>
+                                <div className="flex-grow border-t border-gray-400"></div>
                             </div>
 
                             <textarea
-                                className="w-full h-40 border-2 border-dashed border-gray-300 rounded-xl p-4 font-mono text-sm text-gray-700 focus:border-indigo-500 focus:bg-indigo-50 transition-colors resize-none"
+                                className="w-full h-40 border-2 border-dashed border-gray-400 rounded-xl p-4 font-mono text-sm text-black focus:border-indigo-600 focus:bg-indigo-50 transition-colors resize-none"
                                 placeholder="DNI | NOMBRES | APELLIDOS | GENERO | CONDICION | ES_PADRE | N° CAMISETA"
                                 value={pasteData}
                                 onChange={(e) => handlePasteProcess(e.target.value)}
@@ -523,8 +554,8 @@ export default function NominacionesPage() {
 
                             <div className="mt-6 flex flex-col gap-3">
                                 {hasWarnings && (
-                                    <p className="text-xs text-orange-600 font-bold bg-orange-50 p-2 rounded-lg text-center border border-orange-200">
-                                        ⚠️ Jugadores en otro equipo de esta categoría. Puedes guardar y editarlos más tarde si es necesario.
+                                    <p className="text-xs text-orange-900 font-bold bg-orange-100 p-2 rounded-lg text-center border border-orange-300">
+                                        ⚠️ Jugadores en otro equipo de esta categoría detectados.
                                     </p>
                                 )}
                                 <button
@@ -539,86 +570,35 @@ export default function NominacionesPage() {
                     </div>
 
                     <div className="xl:col-span-2 space-y-6">
-                        {/* VISTA PREVIA (NO SE IMPRIME) */}
-                        {parsedTeams.length > 0 && (
-                            <div className="bg-white rounded-2xl shadow-sm border-2 border-indigo-200 overflow-hidden flex flex-col">
-                                <div className="bg-indigo-600 text-white p-4 shrink-0 flex justify-between items-center">
-                                    <h3 className="font-black text-lg">VISTA PREVIA (Falta Guardar)</h3>
-                                </div>
-                                <div className="p-4 space-y-6 max-h-[500px] overflow-y-auto">
-                                    {parsedTeams.map((team, idx) => (
-                                        <div key={idx} className="border border-gray-200 rounded-xl overflow-hidden">
-                                            <div className="bg-indigo-50 px-4 py-2 font-bold text-indigo-900 border-b border-gray-200 flex justify-between">
-                                                <span>Subdisciplina: {team.subDisciplineName}</span>
-                                                <span className="text-xs bg-indigo-200 text-indigo-800 px-2 py-1 rounded-full">{team.players.length} jugadores</span>
-                                            </div>
-                                            <table className="w-full text-left text-sm whitespace-nowrap">
-                                                <thead className="bg-gray-100 text-gray-600 font-black uppercase text-xs tracking-wider">
-                                                    <tr>
-                                                        <th className="p-3">DNI</th>
-                                                        <th className="p-3">Apellidos, Nombres</th>
-                                                        <th className="p-3 text-center">Gen</th>
-                                                        <th className="p-3 text-center">Condición</th>
-                                                        <th className="p-3 text-center">Camiseta</th>
-                                                        <th className="p-3 text-center">Estado</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody className="divide-y divide-gray-100">
-                                                    {team.players.map((p, pIdx) => (
-                                                        <tr key={pIdx} className={p.rawStatus === 'DUPLICATED' ? 'bg-orange-50' : 'bg-white'}>
-                                                            <td className={`p-3 font-mono font-bold ${p.rawStatus === 'DUPLICATED' ? 'text-orange-700' : 'text-gray-700'}`}>{p.dni}</td>
-                                                            <td className="p-3 font-bold text-gray-900">{p.lastName}, {p.firstName}</td>
-                                                            <td className="p-3 text-center font-bold text-gray-600">{p.gender}</td>
-                                                            <td className="p-3 text-center">
-                                                                <span className={`text-[10px] font-black px-2 py-1 rounded tracking-wider ${p.isStarter ? 'bg-green-100 text-green-800' : 'bg-gray-200 text-gray-600'}`}>
-                                                                    {p.isStarter ? 'TITULAR' : 'SUPLENTE'}
-                                                                </span>
-                                                            </td>
-                                                            <td className="p-3 text-center font-black text-indigo-600">{p.jerseyNumber || '-'}</td>
-                                                            <td className="p-3 text-center font-bold">
-                                                                {p.rawStatus === "DUPLICATED" ? (
-                                                                    <span className="text-[10px] text-orange-800 bg-orange-200 px-2 py-1 rounded block whitespace-normal">{p.duplicateMsg}</span>
-                                                                ) : <span className="text-indigo-600">✓ Listo</span>}
-                                                            </td>
-                                                        </tr>
-                                                    ))}
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
-
-                        {/* DATOS GUARDADOS EN VIVO (Muestra duplicados) */}
-                        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden flex flex-col">
-                            <div className="bg-gray-900 text-white p-4 shrink-0 flex justify-between items-center">
+                        {/* DATOS GUARDADOS EN VIVO (Muestra duplicados, inteligencia de padres y cross-salones) */}
+                        <div className="bg-white rounded-2xl shadow-sm border border-gray-300 overflow-hidden flex flex-col">
+                            <div className="bg-black text-white p-4 shrink-0 flex justify-between items-center">
                                 <h3 className="font-black text-lg">Nóminas Oficiales Guardadas</h3>
-                                <span className="text-xs font-bold text-gray-300">Aula: {selectedClassroomName}</span>
+                                <span className="text-xs font-bold text-gray-200">Aula: {selectedClassroomName}</span>
                             </div>
                             <div className="p-4 space-y-6">
                                 {isLoadingTeams ? (
-                                    <p className="text-center font-bold text-gray-500 py-10">Cargando nóminas...</p>
+                                    <p className="text-center font-bold text-black py-10">Cargando nóminas...</p>
                                 ) : annotatedSavedTeams.length === 0 ? (
-                                    <div className="h-40 flex flex-col items-center justify-center text-gray-400">
-                                        <svg className="w-10 h-10 mb-2 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                                    <div className="h-40 flex flex-col items-center justify-center text-black">
+                                        <svg className="w-10 h-10 mb-2 text-black" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
                                         <p className="font-bold">No hay equipos registrados en este salón.</p>
                                     </div>
                                 ) : (
                                     annotatedSavedTeams.map((team: any) => (
                                         <div key={team.id} className="border border-gray-300 rounded-xl overflow-hidden shadow-sm">
-                                            <div className="bg-gray-100 px-4 py-3 border-b border-gray-300 flex justify-between items-center">
+                                            <div className="bg-gray-200 px-4 py-3 border-b border-gray-300 flex justify-between items-center">
                                                 <div>
-                                                    <span className="text-xs font-black text-gray-500 uppercase block">{team.subDiscipline.discipline.name}</span>
-                                                    <span className="font-black text-gray-900">{team.subDiscipline.name} - Equipo {team.letter}</span>
+                                                    <span className="text-xs font-black text-black uppercase block">{team.subDiscipline.discipline.name}</span>
+                                                    <span className="font-black text-black">{team.subDiscipline.name} - Equipo {team.letter}</span>
                                                 </div>
-                                                <button onClick={() => handleDeleteTeam(team.id, `Equipo ${team.letter} de ${team.subDiscipline.name}`)} className="bg-red-100 text-red-700 hover:bg-red-200 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors">
+                                                <button onClick={() => handleDeleteTeam(team.id, `Equipo ${team.letter} de ${team.subDiscipline.name}`)} className="bg-red-200 text-red-900 hover:bg-red-300 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors border border-red-300">
                                                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                                                     Eliminar Nómina
                                                 </button>
                                             </div>
                                             <table className="w-full text-left text-sm whitespace-nowrap">
-                                                <thead className="bg-gray-50 text-gray-500 font-black uppercase text-[10px] tracking-wider">
+                                                <thead className="bg-gray-100 text-black font-black uppercase text-[10px] tracking-wider border-b border-gray-300">
                                                     <tr>
                                                         <th className="p-3">Nº</th>
                                                         <th className="p-3">DNI / Jugador</th>
@@ -628,32 +608,50 @@ export default function NominacionesPage() {
                                                         <th className="p-3 text-center">Acciones</th>
                                                     </tr>
                                                 </thead>
-                                                <tbody className="divide-y divide-gray-100">
+                                                <tbody className="divide-y divide-gray-200">
                                                     {team.players.map((tp: any, idx: number) => (
-                                                        <tr key={tp.id} className={`${tp.isDuplicated ? 'bg-orange-50' : 'hover:bg-gray-50'} transition-colors`}>
-                                                            <td className="p-3 font-bold text-gray-400">{idx + 1}</td>
+                                                        <tr key={tp.id} className={`${tp.isDuplicated ? 'bg-orange-50' : 'hover:bg-gray-100'} transition-colors`}>
+                                                            <td className="p-3 font-bold text-black">{idx + 1}</td>
                                                             <td className="p-3">
-                                                                <div className="font-mono text-xs text-gray-500">{tp.player.dni}</div>
-                                                                <div className="font-bold text-gray-900">{tp.player.lastName}, {tp.player.firstName}</div>
+                                                                <div className="font-mono text-xs text-black font-bold">{tp.player.dni}</div>
+                                                                <div className="font-black text-black text-base">{tp.player.lastName}, {tp.player.firstName}</div>
+
+                                                                {/* ETIQUETA PADRE/ADOPTIVO */}
+                                                                {tp.player.isParent && (
+                                                                    <div className={`text-[10px] px-2 py-0.5 rounded mt-1 inline-block font-black tracking-wide ${tp.isAdoptive ? 'bg-orange-200 text-orange-900 border border-orange-400' : 'bg-green-200 text-green-900 border border-green-400'}`}>
+                                                                        {tp.isAdoptive ? '🤝 UNIÓN DE HECHO / P. ADOPTIVO' : '👨‍👦 PADRE BIOLÓGICO'}
+                                                                    </div>
+                                                                )}
+
+                                                                {/* ADVERTENCIA DUPLICADO MISMA CATEGORÍA */}
                                                                 {tp.isDuplicated && (
-                                                                    <div className="text-[10px] text-orange-800 bg-orange-200 px-2 py-1 rounded mt-1 inline-block whitespace-normal max-w-xs">
+                                                                    <div className="text-[10px] font-bold text-red-900 bg-red-200 border border-red-300 px-2 py-0.5 rounded mt-1 inline-block whitespace-normal max-w-xs block">
                                                                         {tp.duplicateMsg}
                                                                     </div>
                                                                 )}
+
+                                                                {/* ADVERTENCIA OTROS SALONES */}
+                                                                {tp.otherClassrooms && tp.otherClassrooms.length > 0 && (
+                                                                    <div className="text-[10px] font-bold text-white bg-red-600 px-2 py-0.5 rounded mt-1 inline-block block shadow-sm">
+                                                                        🚨 JUEGA TAMBIÉN EN: {tp.otherClassrooms.join(', ')}
+                                                                    </div>
+                                                                )}
                                                             </td>
-                                                            <td className="p-3 text-center font-bold text-gray-600">{tp.player.gender}</td>
+                                                            <td className="p-3 text-center font-black text-black">{tp.player.gender}</td>
                                                             <td className="p-3 text-center">
-                                                                <span className={`text-[10px] font-black px-2 py-1 rounded tracking-wider ${tp.isStarter ? 'bg-green-100 text-green-800' : 'bg-gray-200 text-gray-600'}`}>
+                                                                <span className={`text-[10px] font-black px-2 py-1 rounded tracking-wider border ${tp.isStarter ? 'bg-green-100 text-green-900 border-green-300' : 'bg-gray-200 text-black border-gray-400'}`}>
                                                                     {tp.isStarter ? 'TITULAR' : 'SUPLENTE'}
                                                                 </span>
                                                             </td>
-                                                            <td className="p-3 text-center font-black text-indigo-600">{tp.jerseyNumber || '-'}</td>
+                                                            <td className="p-3 text-center font-black text-black text-lg">
+                                                                {tp.jerseyNumber ? `👕 ${tp.jerseyNumber}` : '-'}
+                                                            </td>
                                                             <td className="p-3 text-center flex justify-center gap-3">
-                                                                <button onClick={() => setEditingPlayer(JSON.parse(JSON.stringify(tp)))} className="text-blue-500 hover:text-blue-700 transition-colors mt-2" title="Editar Jugador">
-                                                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+                                                                <button onClick={() => setEditingPlayer(JSON.parse(JSON.stringify(tp)))} className="text-blue-600 hover:text-blue-800 transition-colors mt-2" title="Editar Jugador">
+                                                                    <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
                                                                 </button>
-                                                                <button onClick={() => handleDeletePlayer(tp.id, tp.player.firstName)} className="text-red-400 hover:text-red-700 transition-colors mt-2" title="Quitar Jugador">
-                                                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                                                <button onClick={() => handleDeletePlayer(tp.id, tp.player.firstName)} className="text-red-600 hover:text-red-800 transition-colors mt-2" title="Quitar Jugador">
+                                                                    <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                                                                 </button>
                                                             </td>
                                                         </tr>
@@ -672,51 +670,51 @@ export default function NominacionesPage() {
             {/* === MODAL DE EDICIÓN === */}
             {editingPlayer && (
                 <div className="fixed inset-0 bg-black/60 z-50 flex justify-center items-center p-4 print:hidden">
-                    <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl">
-                        <h2 className="text-xl font-black mb-4">Editar Jugador</h2>
+                    <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl border-4 border-black">
+                        <h2 className="text-xl font-black mb-4 text-black">Editar Jugador</h2>
                         <form onSubmit={handleUpdatePlayer} className="space-y-4">
                             <div>
-                                <label className="block text-xs font-bold text-gray-500 mb-1">DNI (No editable)</label>
-                                <input type="text" value={editingPlayer.player.dni} disabled className="w-full border rounded-lg p-2 bg-gray-100 text-gray-500 cursor-not-allowed" />
+                                <label className="block text-xs font-black text-black mb-1">DNI (No editable)</label>
+                                <input type="text" value={editingPlayer.player.dni} disabled className="w-full border-2 border-gray-300 rounded-lg p-2 bg-gray-200 text-black font-bold cursor-not-allowed" />
                             </div>
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
-                                    <label className="block text-xs font-bold text-gray-500 mb-1">Nombres</label>
-                                    <input type="text" value={editingPlayer.player.firstName} onChange={e => setEditingPlayer({ ...editingPlayer, player: { ...editingPlayer.player, firstName: e.target.value } })} required className="w-full border rounded-lg p-2 uppercase" />
+                                    <label className="block text-xs font-black text-black mb-1">Nombres</label>
+                                    <input type="text" value={editingPlayer.player.firstName} onChange={e => setEditingPlayer({ ...editingPlayer, player: { ...editingPlayer.player, firstName: e.target.value } })} required className="w-full border-2 border-gray-300 rounded-lg p-2 uppercase text-black font-bold focus:border-indigo-600" />
                                 </div>
                                 <div>
-                                    <label className="block text-xs font-bold text-gray-500 mb-1">Apellidos</label>
-                                    <input type="text" value={editingPlayer.player.lastName} onChange={e => setEditingPlayer({ ...editingPlayer, player: { ...editingPlayer.player, lastName: e.target.value } })} required className="w-full border rounded-lg p-2 uppercase" />
+                                    <label className="block text-xs font-black text-black mb-1">Apellidos</label>
+                                    <input type="text" value={editingPlayer.player.lastName} onChange={e => setEditingPlayer({ ...editingPlayer, player: { ...editingPlayer.player, lastName: e.target.value } })} required className="w-full border-2 border-gray-300 rounded-lg p-2 uppercase text-black font-bold focus:border-indigo-600" />
                                 </div>
                             </div>
                             <div className="grid grid-cols-3 gap-4">
                                 <div>
-                                    <label className="block text-xs font-bold text-gray-500 mb-1">Género</label>
-                                    <select value={editingPlayer.player.gender} onChange={e => setEditingPlayer({ ...editingPlayer, player: { ...editingPlayer.player, gender: e.target.value } })} className="w-full border rounded-lg p-2">
+                                    <label className="block text-xs font-black text-black mb-1">Género</label>
+                                    <select value={editingPlayer.player.gender} onChange={e => setEditingPlayer({ ...editingPlayer, player: { ...editingPlayer.player, gender: e.target.value } })} className="w-full border-2 border-gray-300 rounded-lg p-2 text-black font-bold focus:border-indigo-600">
                                         <option value="M">Masculino</option>
                                         <option value="F">Femenino</option>
                                     </select>
                                 </div>
                                 <div>
-                                    <label className="block text-xs font-bold text-gray-500 mb-1">Condición</label>
-                                    <select value={editingPlayer.isStarter ? "true" : "false"} onChange={e => setEditingPlayer({ ...editingPlayer, isStarter: e.target.value === "true" })} className="w-full border rounded-lg p-2">
+                                    <label className="block text-xs font-black text-black mb-1">Condición</label>
+                                    <select value={editingPlayer.isStarter ? "true" : "false"} onChange={e => setEditingPlayer({ ...editingPlayer, isStarter: e.target.value === "true" })} className="w-full border-2 border-gray-300 rounded-lg p-2 text-black font-bold focus:border-indigo-600">
                                         <option value="true">Titular</option>
                                         <option value="false">Suplente</option>
                                     </select>
                                 </div>
                                 <div>
-                                    <label className="block text-xs font-bold text-gray-500 mb-1">Camiseta</label>
-                                    <input type="text" value={editingPlayer.jerseyNumber || ""} onChange={e => setEditingPlayer({ ...editingPlayer, jerseyNumber: e.target.value })} placeholder="Opc." className="w-full border rounded-lg p-2" />
+                                    <label className="block text-xs font-black text-black mb-1">Camiseta</label>
+                                    <input type="text" value={editingPlayer.jerseyNumber || ""} onChange={e => setEditingPlayer({ ...editingPlayer, jerseyNumber: e.target.value })} placeholder="Opc." className="w-full border-2 border-gray-300 rounded-lg p-2 text-black font-bold focus:border-indigo-600" />
                                 </div>
                             </div>
                             <label className="flex items-center gap-2 cursor-pointer mt-2">
-                                <input type="checkbox" checked={editingPlayer.player.isParent} onChange={e => setEditingPlayer({ ...editingPlayer, player: { ...editingPlayer.player, isParent: e.target.checked } })} className="w-4 h-4" />
-                                <span className="text-sm font-bold text-gray-700">Es Padre/Madre de familia</span>
+                                <input type="checkbox" checked={editingPlayer.player.isParent} onChange={e => setEditingPlayer({ ...editingPlayer, player: { ...editingPlayer.player, isParent: e.target.checked } })} className="w-5 h-5 accent-indigo-600" />
+                                <span className="text-sm font-black text-black">Es Padre/Madre de familia</span>
                             </label>
 
-                            <div className="flex gap-3 mt-6 pt-4 border-t">
-                                <button type="button" onClick={() => setEditingPlayer(null)} className="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-700 py-2 rounded-lg font-bold">Cancelar</button>
-                                <button type="submit" disabled={isUpdating} className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded-lg font-bold disabled:opacity-50">
+                            <div className="flex gap-3 mt-6 pt-4 border-t-2 border-gray-200">
+                                <button type="button" onClick={() => setEditingPlayer(null)} className="flex-1 bg-gray-300 hover:bg-gray-400 text-black border-2 border-gray-400 py-2 rounded-lg font-black">Cancelar</button>
+                                <button type="submit" disabled={isUpdating} className="flex-1 bg-indigo-600 hover:bg-indigo-800 text-white py-2 rounded-lg font-black border-2 border-indigo-800 disabled:opacity-50">
                                     {isUpdating ? "Guardando..." : "Guardar Cambios"}
                                 </button>
                             </div>
@@ -725,65 +723,67 @@ export default function NominacionesPage() {
                 </div>
             )}
 
-            {/* === VISTA EXCLUSIVA PARA IMPRESIÓN (SIN ESPACIOS GIGANTES) === */}
+            {/* === VISTA EXCLUSIVA PARA IMPRESIÓN (TEXTO NEGRO Y SIN ESPACIOS) === */}
             <div className="hidden print:block bg-white text-black w-full text-xs">
-                <div className="text-center mb-4 border-b-2 border-black pb-2">
-                    <h1 className="text-xl font-black uppercase mb-1">Reporte Oficial de Nóminas</h1>
-                    <h2 className="text-lg font-bold">Salón: {selectedClassroomName}</h2>
-                    <p className="text-[10px] font-medium mt-1">Colegio Unión Internacional - Campeonato Deportivo 2026</p>
+                <div className="text-center mb-4 border-b-4 border-black pb-2">
+                    <h1 className="text-xl font-black uppercase mb-1 text-black">Reporte Oficial de Nóminas</h1>
+                    <h2 className="text-lg font-black text-black">Salón: {selectedClassroomName}</h2>
+                    <p className="text-[10px] font-bold mt-1 text-black">Colegio Unión Internacional - Campeonato Deportivo 2026</p>
                 </div>
 
                 {annotatedSavedTeams.length === 0 ? (
-                    <p className="text-center italic font-bold">No hay nóminas registradas para este salón.</p>
+                    <p className="text-center italic font-black text-black">No hay nóminas registradas para este salón.</p>
                 ) : (
                     <div className="space-y-4">
                         {(Object.entries(groupedForPrint) as [string, Record<string, any[]>][]).map(([audience, disciplinesObj]) => (
                             <div key={audience} className="mb-4">
-                                <h2 className="text-lg font-black text-center bg-gray-200 border-t-2 border-b-2 border-black py-1 mb-2 uppercase tracking-widest break-after-avoid">
+                                <h2 className="text-lg font-black text-center bg-gray-300 border-t-2 border-b-2 border-black py-1 mb-2 uppercase tracking-widest text-black break-after-avoid">
                                     CATEGORÍA: {audience}
                                 </h2>
 
                                 {(Object.entries(disciplinesObj) as [string, any[]][]).map(([discName, teamsArr]) => (
                                     <div key={discName} className="mb-3">
-                                        <h3 className="text-sm font-black uppercase underline mb-1 ml-2 break-after-avoid">
+                                        <h3 className="text-sm font-black uppercase underline mb-1 ml-2 text-black break-after-avoid">
                                             {discName}
                                         </h3>
                                         <div className="space-y-3">
                                             {teamsArr.map((team: any) => (
                                                 <div key={team.id} className="pl-4 break-inside-avoid mb-2">
-                                                    <h4 className="text-[11px] font-bold mb-1">
+                                                    <h4 className="text-[11px] font-black mb-1 text-black">
                                                         ▶ {team.subDiscipline.name} - Equipo {team.letter}
                                                     </h4>
                                                     {team.players.length === 0 ? (
-                                                        <p className="text-[10px] italic ml-4">Sin nómina.</p>
+                                                        <p className="text-[10px] italic font-bold ml-4 text-black">Sin nómina.</p>
                                                     ) : (
-                                                        <table className="w-full text-[10px] border-collapse border border-gray-600 mb-1">
+                                                        <table className="w-full text-[10px] border-collapse border border-black mb-1">
                                                             <thead>
-                                                                <tr className="bg-gray-100">
-                                                                    <th className="border border-gray-400 py-1 px-1 text-center w-6">Nº</th>
-                                                                    <th className="border border-gray-400 py-1 px-1 text-center w-14">DNI</th>
-                                                                    <th className="border border-gray-400 py-1 px-2 text-left">Apellidos y Nombres</th>
-                                                                    <th className="border border-gray-400 py-1 px-1 text-center w-6">Gen</th>
-                                                                    <th className="border border-gray-400 py-1 px-1 text-center w-10">Dorsal</th>
-                                                                    <th className="border border-gray-400 py-1 px-1 text-center w-14">Condición</th>
-                                                                    <th className="border border-gray-400 py-1 px-2 text-center w-20">Firma</th>
+                                                                <tr className="bg-gray-200">
+                                                                    <th className="border border-black py-1 px-1 text-center w-6 font-black text-black">Nº</th>
+                                                                    <th className="border border-black py-1 px-1 text-center w-14 font-black text-black">DNI</th>
+                                                                    <th className="border border-black py-1 px-2 text-left font-black text-black">Apellidos y Nombres</th>
+                                                                    <th className="border border-black py-1 px-1 text-center w-6 font-black text-black">Gen</th>
+                                                                    <th className="border border-black py-1 px-1 text-center w-10 font-black text-black">Dorsal</th>
+                                                                    <th className="border border-black py-1 px-1 text-center w-14 font-black text-black">Condición</th>
+                                                                    <th className="border border-black py-1 px-2 text-center w-20 font-black text-black">Firma</th>
                                                                 </tr>
                                                             </thead>
                                                             <tbody>
-                                                                {team.players.map((p: any, idx: number) => (
-                                                                    <tr key={p.id}>
-                                                                        <td className="border border-gray-400 py-1 px-1 font-bold text-center">{idx + 1}</td>
-                                                                        <td className="border border-gray-400 py-1 px-1 text-center">{p.player.dni}</td>
-                                                                        <td className="border border-gray-400 py-1 px-2 font-bold">
-                                                                            {p.player.lastName}, {p.player.firstName}
-                                                                            {p.player.isParent ? " (P)" : ""}
+                                                                {team.players.map((tp: any, idx: number) => (
+                                                                    <tr key={tp.id}>
+                                                                        <td className="border border-black py-1 px-1 font-bold text-center text-black">{idx + 1}</td>
+                                                                        <td className="border border-black py-1 px-1 text-center font-bold text-black">{tp.player.dni}</td>
+                                                                        <td className="border border-black py-1 px-2 font-black text-black">
+                                                                            {tp.player.lastName}, {tp.player.firstName}
+                                                                            {tp.player.isParent ? (tp.isAdoptive ? " [P.Adoptivo/Unión]" : " [Padre]") : ""}
                                                                         </td>
-                                                                        <td className="border border-gray-400 py-1 px-1 text-center">{p.player.gender}</td>
-                                                                        <td className="border border-gray-400 py-1 px-1 text-center font-bold">{p.jerseyNumber || "-"}</td>
-                                                                        <td className="border border-gray-400 py-1 px-1 text-center">
-                                                                            {p.isStarter ? "Titular" : "Suplente"}
+                                                                        <td className="border border-black py-1 px-1 text-center font-bold text-black">{tp.player.gender}</td>
+                                                                        <td className="border border-black py-1 px-1 text-center font-black text-black">
+                                                                            {tp.jerseyNumber ? `👕 ${tp.jerseyNumber}` : "-"}
                                                                         </td>
-                                                                        <td className="border border-gray-400 py-1 px-2"></td>
+                                                                        <td className="border border-black py-1 px-1 text-center font-bold text-black">
+                                                                            {tp.isStarter ? "Titular" : "Suplente"}
+                                                                        </td>
+                                                                        <td className="border border-black py-1 px-2"></td>
                                                                     </tr>
                                                                 ))}
                                                             </tbody>
@@ -801,12 +801,12 @@ export default function NominacionesPage() {
 
                 <div className="mt-8 flex justify-around print:flex break-inside-avoid">
                     <div className="text-center">
-                        <div className="w-48 border-t border-black mb-1 mx-auto"></div>
-                        <p className="text-[10px] font-bold">Firma del Delegado(a)</p>
+                        <div className="w-48 border-t-2 border-black mb-1 mx-auto"></div>
+                        <p className="text-[10px] font-black text-black">Firma del Delegado(a)</p>
                     </div>
                     <div className="text-center">
-                        <div className="w-48 border-t border-black mb-1 mx-auto"></div>
-                        <p className="text-[10px] font-bold">V°B° Comisión Organizadora</p>
+                        <div className="w-48 border-t-2 border-black mb-1 mx-auto"></div>
+                        <p className="text-[10px] font-black text-black">V°B° Comisión Organizadora</p>
                     </div>
                 </div>
             </div>
