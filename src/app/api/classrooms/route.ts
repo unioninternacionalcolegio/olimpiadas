@@ -1,4 +1,3 @@
-//src/app/api/classrooms/route.ts
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
@@ -7,7 +6,9 @@ import prisma from "@/lib/prisma";
 export async function GET() {
     try {
         const session = await getServerSession(authOptions);
-        if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "No autorizado" }, { status: 403 });
+
+        // CORRECCIÓN: Permitimos que cualquier usuario logueado (Admin, Asistente, Asesor, Delegado) pueda listar los salones
+        if (!session) return NextResponse.json({ error: "No autorizado" }, { status: 403 });
 
         const classrooms = await prisma.classroom.findMany({
             include: {
@@ -30,6 +31,8 @@ export async function GET() {
 export async function POST(request: Request) {
     try {
         const session = await getServerSession(authOptions);
+
+        // MANTENEMOS ESTA REGLA: Solo el ADMIN puede crear salones nuevos
         if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "No autorizado" }, { status: 403 });
 
         const { name, studentGroupId, parentGroupId } = await request.json();
