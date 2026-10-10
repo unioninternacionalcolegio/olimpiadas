@@ -59,7 +59,7 @@ export default function MisPartidosPage() {
             (!selectedTeamLetter) ||
             (m.homeTeam?.letter === selectedTeamLetter) ||
             (m.awayTeam?.letter === selectedTeamLetter) ||
-            (m.competitors?.some((c: any) => c.team.letter === selectedTeamLetter));
+            (m.competitors?.some((c: any) => c.team?.letter === selectedTeamLetter));
 
         return (selectedDiscipline === "" || matchDiscipline === selectedDiscipline) && hasLetter;
     });
@@ -79,6 +79,9 @@ export default function MisPartidosPage() {
     };
 
     const renderDuplicateBadge = (player: any, currentSubDisciplineId: string, currentTeamId: string) => {
+        // Verifica si los equipos vienen del API
+        if (!player.teams) return null;
+
         const otherTeams = player.teams.filter((t: any) =>
             t.team.subDisciplineId === currentSubDisciplineId && t.teamId !== currentTeamId
         );
@@ -136,144 +139,158 @@ export default function MisPartidosPage() {
                 <div className="text-center py-20 text-gray-500 font-bold text-xl">No hay partidos programados para tu salón con estos filtros.</div>
             ) : (
                 <div className="max-w-4xl mx-auto space-y-6">
-                    {filteredMatches.map((match) => (
-                        <div key={match.id} className="relative bg-white rounded-[2.5rem] shadow-2xl p-2 md:p-4 flex flex-col md:flex-row items-center justify-between border-4 border-gray-100 hover:scale-[1.02] transition-transform duration-300">
+                    {filteredMatches.map((match) => {
+                        const isCompetencia = !match.homeTeam && match.competitors && match.competitors.length > 0;
 
-                            {/* EQUIPO LOCAL */}
-                            <div className="flex-1 w-full flex items-center justify-center md:justify-end gap-3 md:gap-4 p-4 text-center md:text-right">
-                                <div>
-                                    <h3 className="text-lg md:text-xl font-black text-gray-900 leading-tight uppercase">
-                                        {match.homeTeam ? match.homeTeam.classroom.name : "Por definir"}
-                                    </h3>
-                                    <p className="text-xs font-bold text-gray-500 mt-1 uppercase">Eq. {match.homeTeam?.letter || "?"}</p>
+                        return (
+                            <div key={match.id} className="relative bg-white rounded-[2.5rem] shadow-2xl p-2 md:p-6 flex flex-col items-center justify-between border-4 border-gray-100 hover:scale-[1.02] transition-transform duration-300 pb-8">
+
+                                {/* CABECERA COMÚN */}
+                                <div className="absolute top-0 right-6 bg-[#0B1A28] text-white text-[10px] font-bold px-4 py-1.5 rounded-b-xl uppercase tracking-widest shadow-md">
+                                    {match.subDiscipline.discipline.name} - {match.subDiscipline.name}
                                 </div>
-                                <div className="w-12 h-12 md:w-16 md:h-16 bg-gradient-to-br from-gray-100 to-gray-300 rounded-full flex items-center justify-center border-4 border-white shadow-md text-2xl">
-                                    🛡️
-                                </div>
+
+                                {isCompetencia ? (
+                                    /* === DISEÑO PARA ATLETISMO (COMPETENCIA) === */
+                                    <div className="w-full flex flex-col items-center mt-6">
+                                        <div className="text-3xl md:text-4xl font-black text-[#00E5FF] italic mb-3" style={{ WebkitTextStroke: '1.5px #0B1A28' }}>COMPETENCIA</div>
+                                        <p className="text-sm font-bold text-gray-500 uppercase tracking-widest mb-4">{match.competitors.length} Equipos Participantes</p>
+
+                                        <div className="flex flex-wrap justify-center gap-3">
+                                            {match.competitors.map((comp: any) => (
+                                                <div key={comp.id} className="bg-gray-100 border-2 border-gray-200 px-4 py-2 rounded-xl flex items-center gap-2 shadow-sm">
+                                                    <span className="text-xl">🏃</span>
+                                                    <div>
+                                                        <p className="font-black text-gray-900 text-sm">{comp.team?.classroom?.name || "Sin Aula"}</p>
+                                                        <p className="text-[10px] font-bold text-gray-500">EQUIPO {comp.team?.letter || "?"}</p>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ) : (
+                                    /* === DISEÑO PARA ENFRENTAMIENTOS 1vs1 === */
+                                    <div className="w-full flex flex-col md:flex-row items-center justify-between mt-4">
+                                        {/* EQUIPO LOCAL */}
+                                        <div className="flex-1 w-full flex items-center justify-center md:justify-end gap-3 md:gap-4 p-2 text-center md:text-right">
+                                            <div>
+                                                <h3 className="text-lg md:text-xl font-black text-gray-900 leading-tight uppercase">
+                                                    {match.homeTeam ? match.homeTeam.classroom.name : "Por definir"}
+                                                </h3>
+                                                <p className="text-xs font-bold text-gray-500 mt-1 uppercase">Eq. {match.homeTeam?.letter || "?"}</p>
+                                            </div>
+                                            <div className="w-12 h-12 md:w-16 md:h-16 bg-gradient-to-br from-gray-100 to-gray-300 rounded-full flex items-center justify-center border-4 border-white shadow-md text-2xl">
+                                                🛡️
+                                            </div>
+                                        </div>
+
+                                        {/* EL "VS" CENTRAL */}
+                                        <div className="flex flex-col items-center justify-center px-4 py-2 md:py-0 z-10">
+                                            <span className="text-4xl md:text-5xl font-black text-[#00E5FF] drop-shadow-md italic" style={{ WebkitTextStroke: '1.5px #0B1A28' }}>VS</span>
+                                        </div>
+
+                                        {/* EQUIPO VISITANTE */}
+                                        <div className="flex-1 w-full flex items-center justify-center md:justify-start gap-3 md:gap-4 p-2 text-center md:text-left flex-row-reverse md:flex-row">
+                                            <div className="w-12 h-12 md:w-16 md:h-16 bg-gradient-to-br from-gray-100 to-gray-300 rounded-full flex items-center justify-center border-4 border-white shadow-md text-2xl">
+                                                ⚔️
+                                            </div>
+                                            <div>
+                                                <h3 className="text-lg md:text-xl font-black text-gray-900 leading-tight uppercase">
+                                                    {match.awayTeam ? match.awayTeam.classroom.name : "Por definir"}
+                                                </h3>
+                                                <p className="text-xs font-bold text-gray-500 mt-1 uppercase">Eq. {match.awayTeam?.letter || "?"}</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* BOTÓN VER NÓMINAS */}
+                                <button
+                                    onClick={() => setSelectedMatch(match)}
+                                    className="absolute bottom-[-15px] left-1/2 transform -translate-x-1/2 bg-gradient-to-r from-[#00E5FF] to-blue-500 text-black font-black px-6 py-1.5 rounded-full shadow-lg border-2 border-white hover:scale-110 transition-transform uppercase text-xs tracking-wider"
+                                >
+                                    Ver Nóminas
+                                </button>
                             </div>
-
-                            {/* EL "VS" CENTRAL */}
-                            <div className="flex flex-col items-center justify-center px-4 py-2 md:py-0 z-10">
-                                <span className="text-4xl md:text-5xl font-black text-[#00E5FF] drop-shadow-md italic" style={{ WebkitTextStroke: '1.5px #0B1A28' }}>VS</span>
-                                <div className="bg-[#0B1A28] text-white text-[10px] font-bold px-3 py-1 rounded-full mt-2 uppercase tracking-widest whitespace-nowrap">
-                                    {match.subDiscipline.name}
-                                </div>
-                            </div>
-
-                            {/* EQUIPO VISITANTE */}
-                            <div className="flex-1 w-full flex items-center justify-center md:justify-start gap-3 md:gap-4 p-4 text-center md:text-left flex-row-reverse md:flex-row">
-                                <div className="w-12 h-12 md:w-16 md:h-16 bg-gradient-to-br from-gray-100 to-gray-300 rounded-full flex items-center justify-center border-4 border-white shadow-md text-2xl">
-                                    ⚔️
-                                </div>
-                                <div>
-                                    <h3 className="text-lg md:text-xl font-black text-gray-900 leading-tight uppercase">
-                                        {match.awayTeam ? match.awayTeam.classroom.name : "Por definir"}
-                                    </h3>
-                                    <p className="text-xs font-bold text-gray-500 mt-1 uppercase">Eq. {match.awayTeam?.letter || "?"}</p>
-                                </div>
-                            </div>
-
-                            {/* BOTÓN VER NÓMINAS */}
-                            <button
-                                onClick={() => setSelectedMatch(match)}
-                                className="absolute bottom-[-15px] left-1/2 transform -translate-x-1/2 bg-gradient-to-r from-[#00E5FF] to-blue-500 text-black font-black px-6 py-1.5 rounded-full shadow-lg border-2 border-white hover:scale-110 transition-transform uppercase text-xs tracking-wider"
-                            >
-                                Ver Nóminas
-                            </button>
-                        </div>
-                    ))}
+                        );
+                    })}
                 </div>
             )}
 
-            {/* MODAL DE NÓMINAS (INTELIGENTE) */}
+            {/* MODAL DE NÓMINAS (INTELIGENTE Y DINÁMICO) */}
             {selectedMatch && (
                 <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex justify-center items-center p-4">
-                    <div className="bg-white rounded-3xl w-full max-w-5xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl border-4 border-[#00E5FF]">
+                    <div className="bg-white rounded-3xl w-full max-w-6xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl border-4 border-[#00E5FF]">
 
                         {/* Header del Modal */}
                         <div className="bg-[#0B1A28] p-4 flex justify-between items-center shrink-0 border-b-4 border-[#00E5FF]">
                             <div>
-                                <h2 className="text-2xl font-black text-white uppercase tracking-wider">{selectedMatch.subDiscipline.name}</h2>
-                                <p className="text-[#00E5FF] font-bold text-sm">Cancha: {selectedMatch.court} | Etapa: {selectedMatch.stage?.name}</p>
+                                <h2 className="text-xl md:text-2xl font-black text-white uppercase tracking-wider">{selectedMatch.subDiscipline.discipline.name} - {selectedMatch.subDiscipline.name}</h2>
+                                <p className="text-[#00E5FF] font-bold text-sm mt-1">Cancha: {selectedMatch.court} | Etapa: {selectedMatch.stage?.name}</p>
                             </div>
                             <button onClick={() => setSelectedMatch(null)} className="bg-white/10 hover:bg-red-500 text-white rounded-full p-2 transition-colors">
                                 <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12"></path></svg>
                             </button>
                         </div>
 
-                        {/* Contenido (Nóminas) */}
+                        {/* Contenido (Nóminas extraídas dinámicamente) */}
                         <div className="p-6 overflow-y-auto bg-gray-50 flex-1">
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                            <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+                                {(() => {
+                                    // 1. Recolectar todos los equipos a mostrar sin repetirlos
+                                    const teamsToShow: any[] = [];
+                                    if (selectedMatch.homeTeam) teamsToShow.push(selectedMatch.homeTeam);
+                                    if (selectedMatch.awayTeam) teamsToShow.push(selectedMatch.awayTeam);
 
-                                {/* NÓMINA LOCAL */}
-                                {selectedMatch.homeTeam && (
-                                    <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-                                        <div className="bg-gray-200 text-gray-900 p-3 font-black text-center border-b border-gray-300 uppercase">
-                                            {selectedMatch.homeTeam.classroom.name} (Eq. {selectedMatch.homeTeam.letter})
-                                        </div>
-                                        <div className="p-2">
-                                            {selectedMatch.homeTeam.players.map((tp: any, idx: number) => (
-                                                <div key={tp.id} className="flex items-center justify-between p-3 border-b border-gray-100 hover:bg-gray-50 rounded-lg">
-                                                    <div className="flex items-center gap-3">
-                                                        <span className="w-8 h-8 flex items-center justify-center bg-gray-100 rounded-full font-black text-gray-500 text-xs">
-                                                            {tp.jerseyNumber ? `👕${tp.jerseyNumber}` : idx + 1}
-                                                        </span>
-                                                        <div>
-                                                            <p className="font-black text-gray-900 text-sm">{tp.player.lastName}, {tp.player.firstName}</p>
-                                                            <div className="flex items-center gap-2 mt-1">
-                                                                <span className="font-mono text-xs text-gray-500 font-bold">{maskDNI(tp.player.dni)}</span>
-                                                                <span className={`text-[9px] px-1.5 py-0.5 rounded uppercase font-bold tracking-wider ${tp.isStarter ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-200 text-gray-600'}`}>
-                                                                    {tp.isStarter ? 'TIT' : 'SUP'}
+                                    if (selectedMatch.competitors) {
+                                        selectedMatch.competitors.forEach((comp: any) => {
+                                            if (comp.team && !teamsToShow.find(t => t.id === comp.team.id)) {
+                                                teamsToShow.push(comp.team);
+                                            }
+                                        });
+                                    }
+
+                                    if (teamsToShow.length === 0) {
+                                        return <p className="col-span-full text-center text-gray-500 font-bold italic py-10">Ningún equipo ha registrado su nómina aún.</p>;
+                                    }
+
+                                    // 2. Dibujar una tarjeta de tabla por cada equipo
+                                    return teamsToShow.map(team => (
+                                        <div key={team.id} className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden h-fit">
+                                            <div className="bg-gray-200 text-gray-900 p-3 font-black text-center border-b border-gray-300 uppercase">
+                                                {team.classroom?.name || "Sin Aula"} (Eq. {team.letter})
+                                            </div>
+                                            <div className="p-2 space-y-1">
+                                                {team.players && team.players.length > 0 ? (
+                                                    team.players.map((tp: any, idx: number) => (
+                                                        <div key={tp.id} className="flex items-center justify-between p-3 border-b border-gray-100 hover:bg-gray-50 rounded-lg transition-colors">
+                                                            <div className="flex items-center gap-3">
+                                                                <span className="w-8 h-8 flex items-center justify-center bg-gray-100 rounded-full font-black text-gray-500 text-xs shrink-0">
+                                                                    {tp.jerseyNumber ? `👕${tp.jerseyNumber}` : idx + 1}
                                                                 </span>
-                                                            </div>
-                                                            {/* INTELIGENCIA: Mostrar etiquetas */}
-                                                            <div className="mt-1 flex gap-1 flex-wrap">
-                                                                {renderParentBadge(tp.player)}
-                                                                {renderDuplicateBadge(tp.player, selectedMatch.subDisciplineId, selectedMatch.homeTeam.id)}
+                                                                <div>
+                                                                    <p className="font-black text-gray-900 text-sm leading-tight">{tp.player.lastName}, {tp.player.firstName}</p>
+                                                                    <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                                                        <span className="font-mono text-xs text-gray-500 font-bold">{maskDNI(tp.player.dni)}</span>
+                                                                        <span className={`text-[9px] px-1.5 py-0.5 rounded uppercase font-bold tracking-wider ${tp.isStarter ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-200 text-gray-600'}`}>
+                                                                            {tp.isStarter ? 'TITULAR' : 'SUPLENTE'}
+                                                                        </span>
+                                                                    </div>
+                                                                    <div className="mt-1.5 flex gap-1 flex-wrap">
+                                                                        {renderParentBadge(tp.player)}
+                                                                        {renderDuplicateBadge(tp.player, selectedMatch.subDisciplineId, team.id)}
+                                                                    </div>
+                                                                </div>
                                                             </div>
                                                         </div>
-                                                    </div>
-                                                </div>
-                                            ))}
-                                            {selectedMatch.homeTeam.players.length === 0 && <p className="p-4 text-center text-gray-400 font-bold italic">Nómina no registrada</p>}
+                                                    ))
+                                                ) : (
+                                                    <p className="p-4 text-center text-gray-400 font-bold italic text-sm">Nómina no registrada</p>
+                                                )}
+                                            </div>
                                         </div>
-                                    </div>
-                                )}
-
-                                {/* NÓMINA VISITANTE */}
-                                {selectedMatch.awayTeam && (
-                                    <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-                                        <div className="bg-gray-200 text-gray-900 p-3 font-black text-center border-b border-gray-300 uppercase">
-                                            {selectedMatch.awayTeam.classroom.name} (Eq. {selectedMatch.awayTeam.letter})
-                                        </div>
-                                        <div className="p-2">
-                                            {selectedMatch.awayTeam.players.map((tp: any, idx: number) => (
-                                                <div key={tp.id} className="flex items-center justify-between p-3 border-b border-gray-100 hover:bg-gray-50 rounded-lg">
-                                                    <div className="flex items-center gap-3">
-                                                        <span className="w-8 h-8 flex items-center justify-center bg-gray-100 rounded-full font-black text-gray-500 text-xs">
-                                                            {tp.jerseyNumber ? `👕${tp.jerseyNumber}` : idx + 1}
-                                                        </span>
-                                                        <div>
-                                                            <p className="font-black text-gray-900 text-sm">{tp.player.lastName}, {tp.player.firstName}</p>
-                                                            <div className="flex items-center gap-2 mt-1">
-                                                                <span className="font-mono text-xs text-gray-500 font-bold">{maskDNI(tp.player.dni)}</span>
-                                                                <span className={`text-[9px] px-1.5 py-0.5 rounded uppercase font-bold tracking-wider ${tp.isStarter ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-200 text-gray-600'}`}>
-                                                                    {tp.isStarter ? 'TIT' : 'SUP'}
-                                                                </span>
-                                                            </div>
-                                                            {/* INTELIGENCIA: Mostrar etiquetas */}
-                                                            <div className="mt-1 flex gap-1 flex-wrap">
-                                                                {renderParentBadge(tp.player)}
-                                                                {renderDuplicateBadge(tp.player, selectedMatch.subDisciplineId, selectedMatch.awayTeam.id)}
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            ))}
-                                            {selectedMatch.awayTeam.players.length === 0 && <p className="p-4 text-center text-gray-400 font-bold italic">Nómina no registrada</p>}
-                                        </div>
-                                    </div>
-                                )}
+                                    ));
+                                })()}
                             </div>
                         </div>
                     </div>

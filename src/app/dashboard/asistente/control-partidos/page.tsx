@@ -5,7 +5,7 @@ import { useState, useEffect } from "react";
 // ==========================================
 // 1. TIPOS Y DEFINICIONES
 // ==========================================
-type Player = { isStarter: boolean; player: { firstName: string; lastName: string; dni: string; isParent: boolean }; };
+type Player = { isStarter: boolean; jerseyNumber?: string; player: { firstName: string; lastName: string; dni: string; isParent: boolean }; };
 type TeamWithPlayers = { id: string; name: string; letter: string; classroomId: string; classroom: { id: string; name: string }; players: Player[]; };
 type Stage = { id: string; name: string; stageOrder: number; stageType: string; pointsForWin: number; pointsForTie: number; pointsForLoss: number; };
 
@@ -13,18 +13,19 @@ type Match = {
     id: string; subDisciplineId: string; stageId: string; stage: Stage; court: string; matchOrder: number;
     status: "PENDIENTE" | "EN_JUEGO" | "FINALIZADO" | "WALKOVER";
     homeScore: number; awayScore: number; homeTablePts: number; awayTablePts: number; observation: string;
+    winnerId: string | null;
     groupId: string | null; group?: { name: string };
     subDiscipline: { id: string; name: string; discipline: { id: string; name: string; format: "ENFRENTAMIENTO" | "COMPETENCIA"; audience: "ESTUDIANTES" | "PADRES" | "MIXTO" }; };
     homeTeam?: TeamWithPlayers; awayTeam?: TeamWithPlayers;
     competitors?: { id: string; score: number; points: number; position: number | null; playerName: string | null; team: TeamWithPlayers; }[];
 };
 
-type Classroom = { id: string; name: string; studentGroupId: string; parentGroupId: string | null };
-
 type Standing = {
     teamId: string; teamName: string; letter: string; classroomId: string; sourceStageId?: string;
     pj: number; pg: number; pe: number; pp: number; gf: number; gc: number; dg: number; pts: number;
 };
+
+const normalizeString = (str: string) => str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
 
 // ==========================================
 // 2. COMPONENTES INTERNOS (Para código limpio)
@@ -39,27 +40,76 @@ const MatchBadge = ({ status }: { status: string }) => {
     }
 };
 
-const TeamPlayersViewer = ({ team }: { team: TeamWithPlayers }) => (
-    <div className="mb-4 bg-gray-50 p-4 rounded-xl border border-gray-200 shadow-sm">
-        <h3 className="font-black text-indigo-900 mb-3 border-b border-gray-200 pb-2">
-            {team.classroom.name} <span className="text-gray-500 text-sm">({team.name})</span>
-        </h3>
-        {team.players.length === 0 ? (
-            <p className="text-sm text-red-500 font-bold bg-red-50 p-2 rounded">Nómina vacía. Faltan inscribir jugadores.</p>
-        ) : (
-            <ul className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
-                {team.players.map((p, i) => (
-                    <li key={i} className="flex justify-between items-center bg-white p-2 rounded-lg border border-gray-100 shadow-sm">
-                        <span className="font-bold text-gray-800 truncate pr-2">{p.player.lastName}, {p.player.firstName}</span>
-                        <span className={`text-[10px] font-black px-2 py-1 rounded tracking-wider ${p.isStarter ? 'bg-indigo-100 text-indigo-800' : 'bg-gray-200 text-gray-600'}`}>
-                            {p.isStarter ? 'TITULAR' : 'SUPLENTE'}
-                        </span>
-                    </li>
-                ))}
-            </ul>
-        )}
-    </div>
-);
+const TeamPlayersViewer = ({ team, subDisciplineId, allMatches, studentSurnames }: { team: TeamWithPlayers, subDisciplineId: string, allMatches: Match[], studentSurnames: Set<string> }) => {
+
+    // Función para buscar si el jugador está en otro equipo de la MISMA subdisciplina
+    const getDuplicateInfo = (dni: string) => {
+        const otherTeams = new Set<string>();
+        allMatches.filter(m => m.subDisciplineId === subDisciplineId).forEach(m => {
+            const check = (t?: TeamWithPlayers) => {
+                if (t && t.id !== team.id && t.players.some(p => p.player.dni === dni)) {
+                    otherTeams.add(`Eq. ${t.letter}`);
+                }
+            };
+            check(m.homeTeam);
+            check(m.awayTeam);
+            m.competitors?.forEach(c => check(c.team));
+        });
+        return Array.from(otherTeams);
+    };
+
+    return (
+        <div className="mb-4 bg-gray-50 p-4 rounded-xl border-2 border-gray-300 shadow-sm">
+            <h3 className="font-black text-black mb-3 border-b-2 border-gray-300 pb-2 uppercase">
+                {team.classroom.name} <span className="text-gray-600 text-sm">(Eq. {team.letter})</span>
+            </h3>
+            {team.players.length === 0 ? (
+                <p className="text-sm text-red-700 font-bold bg-red-100 p-3 border border-red-300 rounded-lg text-center">Nómina vacía. Faltan inscribir jugadores.</p>
+            ) : (
+                <ul className="flex flex-col gap-3 text-sm">
+                    {team.players.map((p, i) => {
+                        const firstSurname = normalizeString(p.player.lastName.trim().split(/\s+/)[0]);
+                        const isAdoptive = p.player.isParent && !studentSurnames.has(firstSurname);
+                        const duplicates = getDuplicateInfo(p.player.dni);
+
+                        return (
+                            <li key={i} className="flex flex-col bg-white p-3 rounded-lg border-2 border-gray-200 shadow-sm hover:border-indigo-300 transition-colors">
+                                <div className="flex justify-between items-center w-full gap-2">
+                                    <div className="flex items-center gap-3 overflow-hidden">
+                                        <span className="w-9 h-9 flex items-center justify-center bg-gray-100 border border-gray-300 rounded-full font-black text-black shrink-0 shadow-inner">
+                                            {p.jerseyNumber ? `👕${p.jerseyNumber}` : i + 1}
+                                        </span>
+                                        <div className="flex flex-col truncate">
+                                            <span className="font-black text-black truncate text-base">{p.player.lastName}, {p.player.firstName}</span>
+                                            <span className="font-mono text-xs text-gray-700 font-bold">{p.player.dni}</span>
+                                        </div>
+                                    </div>
+                                    <span className={`text-[10px] font-black px-2 py-1.5 rounded tracking-wider border ${p.isStarter ? 'bg-indigo-100 text-indigo-900 border-indigo-300' : 'bg-gray-200 text-black border-gray-400'}`}>
+                                        {p.isStarter ? 'TITULAR' : 'SUPLENTE'}
+                                    </span>
+                                </div>
+
+                                {/* Badges Inteligentes */}
+                                <div className="mt-2 flex gap-1.5 flex-wrap pl-12">
+                                    {p.player.isParent && (
+                                        <span className={`text-[9px] px-2 py-0.5 rounded font-black uppercase border shadow-sm ${isAdoptive ? 'bg-orange-100 text-orange-900 border-orange-400' : 'bg-green-100 text-green-900 border-green-400'}`}>
+                                            {isAdoptive ? '🤝 UNIÓN / P. ADOPTIVO' : '👨‍👦 PADRE BIOLÓGICO'}
+                                        </span>
+                                    )}
+                                    {duplicates.length > 0 && (
+                                        <span className="text-[9px] bg-orange-200 text-red-900 border border-red-400 px-2 py-0.5 rounded font-black uppercase shadow-sm">
+                                            R en {duplicates.join(', ')}
+                                        </span>
+                                    )}
+                                </div>
+                            </li>
+                        );
+                    })}
+                </ul>
+            )}
+        </div>
+    );
+};
 
 // ==========================================
 // 3. PÁGINA PRINCIPAL
@@ -70,6 +120,9 @@ export default function ControlPartidosPage() {
     const [groups, setGroups] = useState<any[]>([]);
     const [classrooms, setClassrooms] = useState<any[]>([]);
     const [isLoading, setIsLoading] = useState(true);
+
+    // Estado Inteligente
+    const [allStudentSurnames, setAllStudentSurnames] = useState<Set<string>>(new Set());
 
     // FILTROS
     const [audienceFilter, setAudienceFilter] = useState<string>("");
@@ -86,6 +139,7 @@ export default function ControlPartidosPage() {
     // FORMULARIO ACTUALIZAR RESULTADO
     const [status, setStatus] = useState<string>("PENDIENTE");
     const [observation, setObservation] = useState("");
+    const [winnerId, setWinnerId] = useState<string>("");
     const [homeScore, setHomeScore] = useState(0);
     const [awayScore, setAwayScore] = useState(0);
     const [competitorsData, setCompetitorsData] = useState<any[]>([]);
@@ -96,7 +150,6 @@ export default function ControlPartidosPage() {
         homeClassroomId: "", homeTeamLetter: "A", awayClassroomId: "", awayTeamLetter: "B", classroomIds: [] as string[]
     });
 
-    // ESTADO LLAVES MÁGICAS
     const [selectedTeamsForNextStage, setSelectedTeamsForNextStage] = useState<Standing[]>([]);
 
     const fetchData = async () => {
@@ -105,7 +158,25 @@ export default function ControlPartidosPage() {
             const [mRes, dRes, gRes, cRes] = await Promise.all([
                 fetch("/api/matches"), fetch("/api/disciplines"), fetch("/api/groups"), fetch("/api/classrooms")
             ]);
-            if (mRes.ok) setMatches(await mRes.json());
+            if (mRes.ok) {
+                const fetchedMatches = await mRes.json();
+                setMatches(fetchedMatches);
+
+                // Computar Apellidos de Estudiantes Globales
+                const surnames = new Set<string>();
+                fetchedMatches.forEach((m: Match) => {
+                    const extract = (t?: TeamWithPlayers) => {
+                        t?.players.forEach((tp: any) => {
+                            if (!tp.player.isParent) {
+                                tp.player.lastName.split(/\s+/).forEach((part: string) => surnames.add(normalizeString(part)));
+                            }
+                        });
+                    };
+                    extract(m.homeTeam); extract(m.awayTeam);
+                    m.competitors?.forEach(c => extract(c.team));
+                });
+                setAllStudentSurnames(surnames);
+            }
             if (dRes.ok) setDisciplines(await dRes.json());
             if (gRes.ok) setGroups(await gRes.json());
             if (cRes.ok) setClassrooms(await cRes.json());
@@ -117,7 +188,6 @@ export default function ControlPartidosPage() {
     };
 
     useEffect(() => { fetchData(); }, []);
-
     useEffect(() => { setSelectedDisciplineId(""); setSelectedSubDisciplineId(""); setSelectedTeamsForNextStage([]); setSelectedGroupIdFilter(""); }, [audienceFilter]);
     useEffect(() => { setSelectedSubDisciplineId(""); setSelectedTeamsForNextStage([]); setSelectedGroupIdFilter(""); }, [selectedDisciplineId]);
     useEffect(() => { setSelectedTeamsForNextStage([]); setSelectedGroupIdFilter(""); }, [selectedSubDisciplineId]);
@@ -169,9 +239,15 @@ export default function ControlPartidosPage() {
     };
 
     const openMatchModal = (match: Match) => {
-        setSelectedMatch(match); setStatus(match.status); setObservation(match.observation || ""); setActiveModalTab("RESULTADOS");
+        setSelectedMatch(match);
+        setStatus(match.status);
+        setObservation(match.observation || "");
+        setWinnerId(match.winnerId || "");
+        setActiveModalTab("RESULTADOS");
+
         if (match.subDiscipline.discipline.format === "ENFRENTAMIENTO") {
-            setHomeScore(match.homeScore); setAwayScore(match.awayScore);
+            setHomeScore(match.homeScore);
+            setAwayScore(match.awayScore);
         } else {
             setCompetitorsData(match.competitors?.map(c => ({
                 id: c.id, teamName: c.team.classroom.name, score: c.score, position: c.position || "", points: c.points, playerName: c.playerName || ""
@@ -197,20 +273,33 @@ export default function ControlPartidosPage() {
         e.preventDefault();
         if (!selectedMatch) return;
         const format = selectedMatch.subDiscipline.discipline.format;
-        const body: any = { format, status, observation };
-        if (format === "ENFRENTAMIENTO") { body.homeScore = homeScore; body.awayScore = awayScore; }
-        else { body.competitorsData = competitorsData; }
+
+        // Incluimos el winnerId en el payload
+        const body: any = {
+            format,
+            status,
+            observation,
+            winnerId: winnerId && winnerId !== "EMPATE" ? winnerId : null
+        };
+
+        if (format === "ENFRENTAMIENTO") {
+            body.homeScore = homeScore;
+            body.awayScore = awayScore;
+        } else {
+            body.competitorsData = competitorsData;
+        }
 
         try {
             const res = await fetch(`/api/matches/${selectedMatch.id}`, {
                 method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
             });
             if (res.ok) { alert("Resultado guardado"); setIsMatchModalOpen(false); fetchData(); }
+            else { alert("Error al guardar. Verifica la API."); }
         } catch (error) { console.error(error); }
     };
 
     // ==========================================
-    // MATEMÁTICAS, TABLAS Y ARMADO DE LLAVES
+    // MATEMÁTICAS Y TABLAS
     // ==========================================
     const calculateStandings = (groupMatches: Match[]): Standing[] => {
         const standings: Record<string, Standing> = {};
@@ -337,9 +426,6 @@ export default function ControlPartidosPage() {
 
     return (
         <div className="p-6 bg-gray-50 min-h-screen relative pb-24">
-            {/* ==========================================
-          VISTA WEB (Oculta al imprimir)
-      ========================================== */}
             <div className="print:hidden">
                 <div className="flex flex-col md:flex-row justify-between mb-6 gap-4">
                     <div>
@@ -360,27 +446,27 @@ export default function ControlPartidosPage() {
                 <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 mb-8 flex flex-wrap gap-4">
                     <div className="flex-1 min-w-[150px]">
                         <label className="block text-xs font-black text-gray-500 uppercase mb-1">1. Público</label>
-                        <select className="w-full border-2 rounded-lg p-2.5 font-bold" value={audienceFilter} onChange={(e) => setAudienceFilter(e.target.value)}>
+                        <select className="w-full border-2 rounded-lg p-2.5 font-bold text-gray-900" value={audienceFilter} onChange={(e) => setAudienceFilter(e.target.value)}>
                             <option value="">TODOS</option><option value="ESTUDIANTES">Estudiantes</option><option value="PADRES">Padres</option><option value="MIXTO">Mixto</option>
                         </select>
                     </div>
                     <div className="flex-1 min-w-[200px]">
                         <label className="block text-xs font-black text-gray-500 uppercase mb-1">2. Disciplina</label>
-                        <select className="w-full border-2 rounded-lg p-2.5 font-bold disabled:opacity-50" value={selectedDisciplineId} onChange={(e) => setSelectedDisciplineId(e.target.value)} disabled={!audienceFilter}>
+                        <select className="w-full border-2 rounded-lg p-2.5 font-bold text-gray-900 disabled:opacity-50" value={selectedDisciplineId} onChange={(e) => setSelectedDisciplineId(e.target.value)} disabled={!audienceFilter}>
                             <option value="">TODAS LAS DISCIPLINAS</option>
                             {filteredDisciplines.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                         </select>
                     </div>
                     <div className="flex-1 min-w-[200px]">
                         <label className="block text-xs font-black text-gray-500 uppercase mb-1">3. Categoría</label>
-                        <select className="w-full border-2 rounded-lg p-2.5 font-bold disabled:opacity-50" value={selectedSubDisciplineId} onChange={(e) => setSelectedSubDisciplineId(e.target.value)} disabled={!selectedDisciplineId}>
+                        <select className="w-full border-2 rounded-lg p-2.5 font-bold text-gray-900 disabled:opacity-50" value={selectedSubDisciplineId} onChange={(e) => setSelectedSubDisciplineId(e.target.value)} disabled={!selectedDisciplineId}>
                             <option value="">TODAS LAS CATEGORÍAS</option>
                             {activeDiscipline?.subDisciplines?.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
                         </select>
                     </div>
                     <div className="flex-1 min-w-[150px]">
-                        <label className="block text-xs font-black text-indigo-500 uppercase mb-1">4. Ver Grupo (Opcional)</label>
-                        <select className="w-full border-2 border-indigo-200 bg-indigo-50 rounded-lg p-2.5 font-bold disabled:opacity-50" value={selectedGroupIdFilter} onChange={(e) => setSelectedGroupIdFilter(e.target.value)} disabled={!selectedSubDisciplineId}>
+                        <label className="block text-xs font-black text-indigo-600 uppercase mb-1">4. Ver Grupo (Opcional)</label>
+                        <select className="w-full border-2 border-indigo-200 bg-indigo-50 rounded-lg p-2.5 font-bold text-indigo-900 disabled:opacity-50" value={selectedGroupIdFilter} onChange={(e) => setSelectedGroupIdFilter(e.target.value)} disabled={!selectedSubDisciplineId}>
                             <option value="">TODOS LOS GRUPOS</option>
                             {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
                             <option value="null">Fase de Llaves (Sin Grupo)</option>
@@ -388,11 +474,10 @@ export default function ControlPartidosPage() {
                     </div>
                 </div>
 
-                {/* TABLERO DE PARTIDOS (FLEX SNAP) */}
                 {isLoading ? (
                     <div className="text-center py-20 font-black text-gray-400">Cargando tablero...</div>
                 ) : !selectedDisciplineId ? (
-                    <div className="text-center py-20 text-gray-400 font-bold border-2 border-dashed rounded-2xl bg-white shadow-sm">Selecciona las opciones de arriba para ver el fixture y las tablas.</div>
+                    <div className="text-center py-20 text-gray-500 font-bold border-2 border-dashed rounded-2xl bg-white shadow-sm">Selecciona las opciones de arriba para ver el fixture y las tablas.</div>
                 ) : (
                     <>
                         {!selectedSubDisciplineId ? (
@@ -411,8 +496,6 @@ export default function ControlPartidosPage() {
 
                                     return (
                                         <div key={stage.id} className="flex-none w-[420px] snap-center">
-
-                                            {/* CABECERA DE LA ETAPA */}
                                             <div className="bg-gray-900 text-white p-4 rounded-t-2xl border-b-4 border-indigo-500 flex justify-between items-center shadow-md relative overflow-hidden">
                                                 <div className="relative z-10">
                                                     <p className="text-[10px] text-indigo-300 font-black tracking-widest uppercase mb-1">Etapa {stage.stageOrder}</p>
@@ -422,15 +505,12 @@ export default function ControlPartidosPage() {
                                                 <span className="bg-indigo-600 text-white text-sm font-black px-3 py-1.5 rounded-lg shadow-inner relative z-10">{stageMatches.length} Partidos</span>
                                             </div>
 
-                                            {/* CUERPO DE LA ETAPA */}
                                             <div className="bg-gray-200/60 p-3 rounded-b-2xl min-h-[400px] flex flex-col gap-4 border border-gray-200 border-t-0 shadow-inner">
                                                 {stageMatches.length === 0 ? (
-                                                    <div className="text-center text-gray-400 text-xs font-bold py-10 italic">Sin partidos programados</div>
+                                                    <div className="text-center text-gray-500 text-xs font-bold py-10 italic">Sin partidos programados</div>
                                                 ) : (
                                                     Object.entries(matchesByGroup).map(([groupName, groupMatches]) => (
                                                         <div key={groupName} className="flex flex-col gap-3 mb-4">
-
-                                                            {/* SEPARADOR DE GRUPO */}
                                                             <div className="flex items-center gap-3 my-1">
                                                                 <div className="h-[2px] bg-gray-300 flex-1 rounded-full"></div>
                                                                 <span className="text-[10px] font-black text-gray-600 uppercase tracking-widest bg-gray-200 px-3 py-1.5 rounded-lg shadow-sm border border-gray-300">
@@ -439,7 +519,6 @@ export default function ControlPartidosPage() {
                                                                 <div className="h-[2px] bg-gray-300 flex-1 rounded-full"></div>
                                                             </div>
 
-                                                            {/* MAPEO DE PARTIDOS DEL GRUPO */}
                                                             {groupMatches.map(match => {
                                                                 const isHomeSelected = selectedTeamsForNextStage.some(t => t.teamId === match.homeTeam?.id);
                                                                 const isAwaySelected = selectedTeamsForNextStage.some(t => t.teamId === match.awayTeam?.id);
@@ -475,7 +554,6 @@ export default function ControlPartidosPage() {
                                                                                     <span className="font-black text-lg w-8 text-right bg-black/30 rounded px-1">{match.status === "PENDIENTE" ? '-' : match.awayScore}</span>
                                                                                 </div>
 
-                                                                                {/* ELIMINACIÓN DIRECTA: Botón Clasificar */}
                                                                                 {stage.stageType === "ELIMINACION_DIRECTA" && (match.status === "FINALIZADO" || match.status === "WALKOVER") && (
                                                                                     <div className="mt-2 pt-2 border-t border-gray-700 flex justify-center gap-2">
                                                                                         {match.homeScore > match.awayScore && (
@@ -526,7 +604,6 @@ export default function ControlPartidosPage() {
                                                                 );
                                                             })}
 
-                                                            {/* TABLA DE POSICIONES (Acumulación de Puntos) */}
                                                             {stage.stageType === "ACUMULACION_PUNTOS" && calculateStandings(groupMatches).length > 0 && (
                                                                 <div className="mt-3 bg-white rounded-xl overflow-hidden border-2 border-indigo-300 shadow-xl">
                                                                     <div className="bg-indigo-600 text-white text-[11px] font-black uppercase p-2.5 text-center">🏆 Tabla Posiciones / Desempate</div>
@@ -534,23 +611,23 @@ export default function ControlPartidosPage() {
                                                                         <table className="w-full text-[11px] text-center whitespace-nowrap">
                                                                             <thead className="bg-indigo-50 font-black text-indigo-900 border-b-2 border-indigo-200">
                                                                                 <tr>
-                                                                                    <th className="text-left p-2 pl-3">Equipo</th><th className="p-2 w-6">PJ</th><th className="p-2 w-6 text-gray-400">G</th><th className="p-2 w-6 text-gray-400">E</th><th className="p-2 w-6 text-gray-400">P</th><th className="p-2 w-6">GF</th><th className="p-2 w-6 text-gray-400">GC</th><th className="p-2 w-6 bg-indigo-100">DG</th><th className="p-2 w-10 text-indigo-700 text-xs">PTS</th>
+                                                                                    <th className="text-left p-2 pl-3">Equipo</th><th className="p-2 w-6">PJ</th><th className="p-2 w-6 text-gray-500">G</th><th className="p-2 w-6 text-gray-500">E</th><th className="p-2 w-6 text-gray-500">P</th><th className="p-2 w-6 text-black">GF</th><th className="p-2 w-6 text-gray-500">GC</th><th className="p-2 w-6 bg-indigo-100 text-black">DG</th><th className="p-2 w-10 text-indigo-700 text-xs">PTS</th>
                                                                                 </tr>
                                                                             </thead>
-                                                                            <tbody className="divide-y divide-gray-100 font-bold text-gray-700">
+                                                                            <tbody className="divide-y divide-gray-100 font-bold text-gray-800">
                                                                                 {calculateStandings(groupMatches).map((st, idx) => {
                                                                                     const isClasificado = idx < 2;
                                                                                     const isSelected = selectedTeamsForNextStage.some(t => t.teamId === st.teamId);
                                                                                     return (
                                                                                         <tr key={st.teamId} className={`group hover:bg-gray-50 transition-colors ${isSelected ? "bg-indigo-50" : isClasificado ? "bg-green-50/50" : "bg-white"}`}>
                                                                                             <td className="text-left p-2 pl-3">
-                                                                                                <div className="flex items-center gap-2"><span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] text-white ${isSelected ? 'bg-indigo-600' : isClasificado ? 'bg-green-600' : 'bg-gray-400'}`}>{idx + 1}</span><div className="flex flex-col"><span className={`truncate max-w-[100px] ${isSelected ? 'text-indigo-900 font-black' : isClasificado ? 'text-green-900 font-black' : ''}`}>{st.teamName}</span><span className="text-[9px] text-gray-400 uppercase">Eq. {st.letter}</span></div></div>
+                                                                                                <div className="flex items-center gap-2"><span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] text-white ${isSelected ? 'bg-indigo-600' : isClasificado ? 'bg-green-600' : 'bg-gray-500'}`}>{idx + 1}</span><div className="flex flex-col"><span className={`truncate max-w-[100px] ${isSelected ? 'text-indigo-900 font-black' : isClasificado ? 'text-green-900 font-black' : 'text-black'}`}>{st.teamName}</span><span className="text-[9px] text-gray-500 uppercase">Eq. {st.letter}</span></div></div>
                                                                                             </td>
-                                                                                            <td className="p-2 font-black">{st.pj}</td><td className="p-2 text-gray-400">{st.pg}</td><td className="p-2 text-gray-400">{st.pe}</td><td className="p-2 text-gray-400">{st.pp}</td><td className="p-2 text-gray-600">{st.gf}</td><td className="p-2 text-gray-400">{st.gc}</td><td className="p-2 bg-indigo-50/50 font-black">{st.dg > 0 ? `+${st.dg}` : st.dg}</td>
+                                                                                            <td className="p-2 font-black">{st.pj}</td><td className="p-2 text-gray-500">{st.pg}</td><td className="p-2 text-gray-500">{st.pe}</td><td className="p-2 text-gray-500">{st.pp}</td><td className="p-2 text-black">{st.gf}</td><td className="p-2 text-gray-500">{st.gc}</td><td className="p-2 bg-indigo-50/50 font-black text-black">{st.dg > 0 ? `+${st.dg}` : st.dg}</td>
                                                                                             <td className="p-2 font-black text-indigo-700 text-sm bg-indigo-50/30">
                                                                                                 <div className="flex items-center justify-between gap-2">
                                                                                                     <span>{st.pts}</span>
-                                                                                                    <button onClick={() => handleSelectWinnerForNextStage(stage.id, st.teamId, st.teamName, st.classroomId, st.letter)} className={`transition-all rounded p-1 ${isSelected ? 'opacity-100 bg-indigo-600 text-white scale-110' : 'opacity-0 group-hover:opacity-100 bg-gray-200 text-gray-600 hover:bg-indigo-600 hover:text-white'}`}>
+                                                                                                    <button onClick={() => handleSelectWinnerForNextStage(stage.id, st.teamId, st.teamName, st.classroomId, st.letter)} className={`transition-all rounded p-1 ${isSelected ? 'opacity-100 bg-indigo-600 text-white scale-110' : 'opacity-0 group-hover:opacity-100 bg-gray-200 text-gray-700 hover:bg-indigo-600 hover:text-white'}`}>
                                                                                                         {isSelected ? '❌' : '⚔️'}
                                                                                                     </button>
                                                                                                 </div>
@@ -561,7 +638,7 @@ export default function ControlPartidosPage() {
                                                                             </tbody>
                                                                         </table>
                                                                     </div>
-                                                                    <div className="bg-gray-100 p-2 flex justify-between items-center text-[9px] font-bold text-gray-500 uppercase"><span>1° PTS | 2° DG | 3° GF</span><span className="text-indigo-600">👆 Haz clic en 2 equipos para armar llave</span></div>
+                                                                    <div className="bg-gray-100 p-2 flex justify-between items-center text-[9px] font-bold text-gray-600 uppercase"><span>1° PTS | 2° DG | 3° GF</span><span className="text-indigo-700">👆 Haz clic en 2 equipos para armar llave</span></div>
                                                                 </div>
                                                             )}
                                                         </div>
@@ -574,7 +651,6 @@ export default function ControlPartidosPage() {
                             </div>
                         )}
 
-                        {/* TABLA DE PUNTUACIÓN GENERAL DE LA DISCIPLINA */}
                         {selectedDisciplineId && globalStandings.length > 0 && (
                             <div className="mt-12 bg-white rounded-2xl shadow-xl border-2 border-indigo-600 overflow-hidden mb-8">
                                 <div className="bg-indigo-700 text-white p-6 text-center">
@@ -594,12 +670,12 @@ export default function ControlPartidosPage() {
                                             {globalStandings.map((st: any, idx: number) => (
                                                 <tr key={st.classroomId} className={`hover:bg-indigo-50 transition-colors ${idx === 0 ? 'bg-yellow-50' : idx === 1 ? 'bg-gray-100' : idx === 2 ? 'bg-orange-50' : ''}`}>
                                                     <td className="p-4 text-center">
-                                                        <span className={`w-8 h-8 flex items-center justify-center rounded-full font-black text-white mx-auto ${idx === 0 ? 'bg-yellow-500 shadow-lg scale-110' : idx === 1 ? 'bg-gray-400 shadow' : idx === 2 ? 'bg-orange-500 shadow' : 'bg-gray-800'}`}>
+                                                        <span className={`w-8 h-8 flex items-center justify-center rounded-full font-black text-white mx-auto ${idx === 0 ? 'bg-yellow-500 shadow-lg scale-110' : idx === 1 ? 'bg-gray-500 shadow' : idx === 2 ? 'bg-orange-500 shadow' : 'bg-gray-800'}`}>
                                                             {idx + 1}
                                                         </span>
                                                     </td>
                                                     <td className="p-4 font-black text-gray-900 text-lg">{st.classroomName}</td>
-                                                    <td className="p-4 text-right font-black text-2xl text-indigo-700">{st.totalPts} <span className="text-sm text-gray-500">Pts</span></td>
+                                                    <td className="p-4 text-right font-black text-2xl text-indigo-700">{st.totalPts} <span className="text-sm text-gray-600">Pts</span></td>
                                                 </tr>
                                             ))}
                                         </tbody>
@@ -618,10 +694,10 @@ export default function ControlPartidosPage() {
                 <div className="hidden print:block text-black bg-white p-8">
                     <div className="text-center mb-8 border-b-2 border-black pb-4">
                         <h1 className="text-3xl font-black uppercase mb-2">Reporte de Resultados Oficiales</h1>
-                        <h2 className="text-xl font-bold text-gray-800">
+                        <h2 className="text-xl font-bold text-gray-900">
                             {activeDiscipline?.name} {activeSubDiscipline ? `- ${activeSubDiscipline.name}` : '(Resumen General)'}
                         </h2>
-                        <p className="text-sm font-medium mt-2 text-gray-600">Colegio Unión Internacional - Campeonato 2026</p>
+                        <p className="text-sm font-medium mt-2 text-gray-700">Colegio Unión Internacional - Campeonato 2026</p>
                     </div>
 
                     {selectedSubDisciplineId && matchesForPrintByStage?.map((stageItem: any) => {
@@ -634,26 +710,26 @@ export default function ControlPartidosPage() {
 
                         return (
                             <div key={stageItem.stage.id} className="mb-10 page-break-inside-avoid">
-                                <h3 className="text-xl font-black uppercase bg-gray-200 p-2 border-l-4 border-black mb-4">
-                                    Etapa {stageItem.stage.stageOrder}: {stageItem.stage.name} <span className="text-sm font-normal normal-case italic">({stageItem.stage.stageType.replace("_", " ")})</span>
+                                <h3 className="text-xl font-black uppercase bg-gray-200 p-2 border-l-4 border-black mb-4 text-black">
+                                    Etapa {stageItem.stage.stageOrder}: {stageItem.stage.name} <span className="text-sm font-normal normal-case italic text-black">({stageItem.stage.stageType.replace("_", " ")})</span>
                                 </h3>
 
                                 {Object.entries(matchesByGroup).map(([groupName, groupMatches]: [string, any]) => (
                                     <div key={groupName} className="mb-6 pl-4">
-                                        <h4 className="text-lg font-bold mb-3 underline decoration-2 underline-offset-4">{groupName}</h4>
+                                        <h4 className="text-lg font-bold mb-3 underline decoration-2 underline-offset-4 text-black">{groupName}</h4>
 
                                         <table className="w-full text-sm border-collapse border border-gray-400 mb-4">
                                             <thead>
-                                                <tr className="bg-gray-100">
+                                                <tr className="bg-gray-100 text-black">
                                                     <th className="border border-gray-400 p-2 w-16 text-center">Orden</th>
                                                     <th className="border border-gray-400 p-2 w-24 text-center">Estado</th>
-                                                    <th className="border border-gray-400 p-2">Partido / Competencia</th>
+                                                    <th className="border border-gray-400 p-2 text-left">Partido / Competencia</th>
                                                     <th className="border border-gray-400 p-2 w-32 text-center">Resultado</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
                                                 {groupMatches.map((m: Match) => (
-                                                    <tr key={m.id}>
+                                                    <tr key={m.id} className="text-black">
                                                         <td className="border border-gray-400 p-2 text-center font-bold">{m.matchOrder}</td>
                                                         <td className="border border-gray-400 p-2 text-center text-xs">{m.status}</td>
                                                         <td className="border border-gray-400 p-2">
@@ -685,8 +761,8 @@ export default function ControlPartidosPage() {
 
                                         {stageItem.stage.stageType === "ACUMULACION_PUNTOS" && (
                                             <div className="mt-4 border-2 border-black p-2">
-                                                <h5 className="font-black text-center mb-2 uppercase">Tabla de Posiciones Oficial - {groupName}</h5>
-                                                <table className="w-full text-sm border-collapse">
+                                                <h5 className="font-black text-center mb-2 uppercase text-black">Tabla de Posiciones Oficial - {groupName}</h5>
+                                                <table className="w-full text-sm border-collapse text-black">
                                                     <thead>
                                                         <tr className="bg-gray-100 border-b border-black">
                                                             <th className="p-1 text-left">Equipo</th>
@@ -726,12 +802,12 @@ export default function ControlPartidosPage() {
 
                     {globalStandings.length > 0 && (
                         <div className="mt-10 page-break-inside-avoid">
-                            <h3 className="text-xl font-black uppercase bg-gray-200 p-2 border-l-4 border-black mb-4">🏆 Clasificación General (Suma Puntos)</h3>
-                            <table className="w-full text-sm border-collapse border border-gray-400">
+                            <h3 className="text-xl font-black uppercase bg-gray-200 p-2 border-l-4 border-black mb-4 text-black">🏆 Clasificación General (Suma Puntos)</h3>
+                            <table className="w-full text-sm border-collapse border border-gray-400 text-black">
                                 <thead>
                                     <tr className="bg-gray-100">
                                         <th className="border border-gray-400 p-2 w-16 text-center">Rank</th>
-                                        <th className="border border-gray-400 p-2">Aula / Salón</th>
+                                        <th className="border border-gray-400 p-2 text-left">Aula / Salón</th>
                                         <th className="border border-gray-400 p-2 w-32 text-center">Puntaje Absoluto</th>
                                     </tr>
                                 </thead>
@@ -739,7 +815,7 @@ export default function ControlPartidosPage() {
                                     {globalStandings.map((st: any, idx: number) => (
                                         <tr key={st.classroomId}>
                                             <td className="border border-gray-400 p-2 text-center font-bold">{idx + 1}</td>
-                                            <td className="border border-gray-400 p-2 font-bold">{st.classroomName}</td>
+                                            <td className="border border-gray-400 p-2 font-bold text-left">{st.classroomName}</td>
                                             <td className="border border-gray-400 p-2 text-center font-black">{st.totalPts} Pts</td>
                                         </tr>
                                     ))}
@@ -751,11 +827,11 @@ export default function ControlPartidosPage() {
                     <div className="mt-16 flex justify-around">
                         <div className="text-center">
                             <div className="w-48 border-t border-black mb-2 mx-auto"></div>
-                            <p className="text-sm font-bold">Firma del Juez / Árbitro</p>
+                            <p className="text-sm font-bold text-black">Firma del Juez / Árbitro</p>
                         </div>
                         <div className="text-center">
                             <div className="w-48 border-t border-black mb-2 mx-auto"></div>
-                            <p className="text-sm font-bold">Mesa de Control</p>
+                            <p className="text-sm font-bold text-black">Mesa de Control</p>
                         </div>
                     </div>
                 </div>
@@ -776,7 +852,7 @@ export default function ControlPartidosPage() {
                 </div>
             )}
 
-            {/* MODAL DETALLES DEL PARTIDO (ACTUALIZAR RESULTADOS) */}
+            {/* MODAL DETALLES DEL PARTIDO (ACTUALIZAR RESULTADOS) RESPONSIVE */}
             {isMatchModalOpen && selectedMatch && (
                 <div className="print:hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
                     <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[90vh]">
@@ -789,17 +865,17 @@ export default function ControlPartidosPage() {
                         </div>
 
                         <div className="flex border-b-2 border-gray-200 shrink-0 bg-gray-50">
-                            <button onClick={() => setActiveModalTab("RESULTADOS")} className={`flex-1 py-3 text-sm font-black uppercase ${activeModalTab === "RESULTADOS" ? "bg-white text-indigo-700 border-b-4 border-indigo-700" : "text-gray-500 hover:bg-gray-100"}`}>Resultado</button>
-                            <button onClick={() => setActiveModalTab("NOMINAS")} className={`flex-1 py-3 text-sm font-black uppercase ${activeModalTab === "NOMINAS" ? "bg-white text-indigo-700 border-b-4 border-indigo-700" : "text-gray-500 hover:bg-gray-100"}`}>Nóminas</button>
+                            <button onClick={() => setActiveModalTab("RESULTADOS")} className={`flex-1 py-3 text-sm font-black uppercase ${activeModalTab === "RESULTADOS" ? "bg-white text-indigo-700 border-b-4 border-indigo-700" : "text-gray-600 hover:bg-gray-100"}`}>Resultado</button>
+                            <button onClick={() => setActiveModalTab("NOMINAS")} className={`flex-1 py-3 text-sm font-black uppercase ${activeModalTab === "NOMINAS" ? "bg-white text-indigo-700 border-b-4 border-indigo-700" : "text-gray-600 hover:bg-gray-100"}`}>Nóminas</button>
                         </div>
 
                         <div className="overflow-y-auto flex-1 bg-white">
                             {activeModalTab === "RESULTADOS" && (
                                 <form onSubmit={handleSaveResult} className="p-6">
-                                    <div className="grid grid-cols-2 gap-5 mb-6 bg-gray-50 p-4 rounded-xl border border-gray-200">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-6 bg-gray-50 p-4 rounded-xl border border-gray-200">
                                         <div>
-                                            <label className="block text-xs font-black text-gray-500 uppercase mb-2">Estado</label>
-                                            <select className="w-full border-2 rounded-lg p-2.5 font-bold" value={status} onChange={(e) => setStatus(e.target.value)}>
+                                            <label className="block text-xs font-black text-black uppercase mb-2">Estado</label>
+                                            <select className="w-full border-2 border-gray-300 rounded-lg p-2.5 font-bold text-black" value={status} onChange={(e) => setStatus(e.target.value)}>
                                                 <option value="PENDIENTE">PENDIENTE</option>
                                                 <option value="EN_JUEGO">EN JUEGO</option>
                                                 <option value="FINALIZADO">FINALIZADO</option>
@@ -807,32 +883,32 @@ export default function ControlPartidosPage() {
                                             </select>
                                         </div>
                                         <div>
-                                            <label className="block text-xs font-black text-gray-500 uppercase mb-2">Observación</label>
-                                            <input type="text" className="w-full border-2 rounded-lg p-2.5 font-medium" placeholder="Opcional..." value={observation} onChange={(e) => setObservation(e.target.value)} />
+                                            <label className="block text-xs font-black text-black uppercase mb-2">Observación</label>
+                                            <input type="text" className="w-full border-2 border-gray-300 rounded-lg p-2.5 font-bold text-black" placeholder="Ej. Retiro de equipo, lesión..." value={observation} onChange={(e) => setObservation(e.target.value)} />
                                         </div>
                                     </div>
 
                                     {selectedMatch.subDiscipline.discipline.format === "ENFRENTAMIENTO" ? (
-                                        <div className="flex justify-around items-center py-8">
-                                            <div className="text-center w-5/12">
-                                                <p className="font-black text-xl mb-1">{selectedMatch.homeTeam?.classroom.name}</p>
-                                                <p className="text-sm font-bold text-gray-500 mb-3">(Eq. {selectedMatch.homeTeam?.letter})</p>
-                                                <input type="number" min="0" className="w-32 text-center text-5xl font-black border-2 border-gray-300 rounded-2xl p-4 text-gray-900 focus:border-indigo-600 bg-gray-50 shadow-inner" value={homeScore} onChange={(e) => setHomeScore(Number(e.target.value))} />
+                                        <div className="flex flex-col md:flex-row justify-around items-center py-4 md:py-8 gap-6 md:gap-0">
+                                            <div className="text-center w-full md:w-5/12 border-b-2 border-gray-200 md:border-none pb-6 md:pb-0">
+                                                <p className="font-black text-xl mb-1 text-black">{selectedMatch.homeTeam?.classroom.name}</p>
+                                                <p className="text-sm font-bold text-gray-600 mb-3">(Eq. {selectedMatch.homeTeam?.letter})</p>
+                                                <input type="number" min="0" className="w-24 md:w-32 mx-auto text-center text-5xl font-black border-2 border-gray-300 rounded-2xl p-3 text-black focus:border-indigo-600 bg-white shadow-inner" value={homeScore} onChange={(e) => setHomeScore(Number(e.target.value))} />
                                             </div>
-                                            <div className="text-gray-300 font-black text-3xl italic">VS</div>
-                                            <div className="text-center w-5/12">
-                                                <p className="font-black text-xl mb-1">{selectedMatch.awayTeam?.classroom.name}</p>
-                                                <p className="text-sm font-bold text-gray-500 mb-3">(Eq. {selectedMatch.awayTeam?.letter})</p>
-                                                <input type="number" min="0" className="w-32 text-center text-5xl font-black border-2 border-gray-300 rounded-2xl p-4 text-gray-900 focus:border-indigo-600 bg-gray-50 shadow-inner" value={awayScore} onChange={(e) => setAwayScore(Number(e.target.value))} />
+                                            <div className="text-gray-900 font-black text-3xl italic">VS</div>
+                                            <div className="text-center w-full md:w-5/12 pt-4 md:pt-0">
+                                                <p className="font-black text-xl mb-1 text-black">{selectedMatch.awayTeam?.classroom.name}</p>
+                                                <p className="text-sm font-bold text-gray-600 mb-3">(Eq. {selectedMatch.awayTeam?.letter})</p>
+                                                <input type="number" min="0" className="w-24 md:w-32 mx-auto text-center text-5xl font-black border-2 border-gray-300 rounded-2xl p-3 text-black focus:border-indigo-600 bg-white shadow-inner" value={awayScore} onChange={(e) => setAwayScore(Number(e.target.value))} />
                                             </div>
                                         </div>
                                     ) : (
-                                        <div className="max-h-72 overflow-y-auto border border-gray-200 rounded-xl">
+                                        <div className="max-h-72 overflow-y-auto border border-gray-300 rounded-xl">
                                             <table className="w-full text-left text-sm border-collapse">
-                                                <thead className="bg-gray-100 text-gray-700 font-black sticky top-0 shadow-sm">
+                                                <thead className="bg-gray-200 text-black font-black sticky top-0 shadow-sm">
                                                     <tr>
                                                         <th className="p-3">Salón y Atleta</th>
-                                                        <th className="p-3 text-center">Marca (Seg)</th>
+                                                        <th className="p-3 text-center">Marca</th>
                                                         <th className="p-3 text-center">Puesto</th>
                                                         <th className="p-3 text-center">Pts</th>
                                                     </tr>
@@ -842,10 +918,10 @@ export default function ControlPartidosPage() {
                                                         const originalComp = selectedMatch.competitors?.find(comp => comp.id === c.id);
                                                         const classPlayers = originalComp?.team.players || [];
                                                         return (
-                                                            <tr key={c.id} className="border-b border-gray-100">
+                                                            <tr key={c.id} className="border-b border-gray-200">
                                                                 <td className="p-3">
-                                                                    <div className="font-black mb-1 text-gray-900">{c.teamName}</div>
-                                                                    <select className="w-full border-2 border-gray-200 rounded p-1 text-xs font-bold text-gray-700" value={c.playerName || ""} onChange={(e) => handleCompetitorChange(idx, "playerName", e.target.value)}>
+                                                                    <div className="font-black mb-1 text-black">{c.teamName}</div>
+                                                                    <select className="w-full border-2 border-gray-300 rounded p-1 text-xs font-bold text-black bg-white" value={c.playerName || ""} onChange={(e) => handleCompetitorChange(idx, "playerName", e.target.value)}>
                                                                         <option value="">-- Seleccionar Atleta --</option>
                                                                         {classPlayers.map((tp: any) => (
                                                                             <option key={tp.player.dni} value={`${tp.player.lastName}, ${tp.player.firstName}`}>
@@ -855,13 +931,13 @@ export default function ControlPartidosPage() {
                                                                     </select>
                                                                 </td>
                                                                 <td className="p-3 text-center">
-                                                                    <input type="number" step="0.01" className="w-20 border-2 rounded-lg p-1.5 text-center font-bold" value={c.score} onChange={(e) => handleCompetitorChange(idx, "score", e.target.value)} />
+                                                                    <input type="number" step="0.01" className="w-20 border-2 border-gray-300 rounded-lg p-1.5 text-center font-bold text-black" value={c.score} onChange={(e) => handleCompetitorChange(idx, "score", e.target.value)} />
                                                                 </td>
                                                                 <td className="p-3 text-center">
-                                                                    <input type="number" min="1" className="w-16 border-2 rounded-lg p-1.5 text-center font-bold" value={c.position} onChange={(e) => handleCompetitorChange(idx, "position", e.target.value)} />
+                                                                    <input type="number" min="1" className="w-16 border-2 border-gray-300 rounded-lg p-1.5 text-center font-bold text-black" value={c.position} onChange={(e) => handleCompetitorChange(idx, "position", e.target.value)} />
                                                                 </td>
                                                                 <td className="p-3 text-center">
-                                                                    <input type="number" className="w-16 border-2 border-indigo-200 bg-indigo-50 text-indigo-800 font-black rounded-lg p-1.5 text-center" value={c.points} onChange={(e) => handleCompetitorChange(idx, "points", e.target.value)} />
+                                                                    <input type="number" className="w-16 border-2 border-indigo-300 bg-indigo-50 text-indigo-900 font-black rounded-lg p-1.5 text-center" value={c.points} onChange={(e) => handleCompetitorChange(idx, "points", e.target.value)} />
                                                                 </td>
                                                             </tr>
                                                         );
@@ -871,8 +947,20 @@ export default function ControlPartidosPage() {
                                         </div>
                                     )}
 
+                                    {/* SELECTOR DE GANADOR (SOLO PARA 1VS1 EN ESTADOS FINALES O W.O.) */}
+                                    {(status === "FINALIZADO" || status === "WALKOVER") && selectedMatch.subDiscipline.discipline.format === "ENFRENTAMIENTO" && (
+                                        <div className="mt-6 bg-gray-100 p-4 rounded-xl border-2 border-gray-300 shadow-sm">
+                                            <label className="block text-xs font-black text-black uppercase mb-2">🏅 Seleccionar Ganador Oficial (Obligatorio en W.O.)</label>
+                                            <select className="w-full border-2 border-gray-300 bg-white rounded-lg p-3 font-bold text-black focus:border-indigo-600" value={winnerId} onChange={e => setWinnerId(e.target.value)}>
+                                                <option value="EMPATE">-- Empate / Ninguno --</option>
+                                                {selectedMatch.homeTeam && <option value={selectedMatch.homeTeam.id}>{selectedMatch.homeTeam.classroom.name} (Eq. {selectedMatch.homeTeam.letter})</option>}
+                                                {selectedMatch.awayTeam && <option value={selectedMatch.awayTeam.id}>{selectedMatch.awayTeam.classroom.name} (Eq. {selectedMatch.awayTeam.letter})</option>}
+                                            </select>
+                                        </div>
+                                    )}
+
                                     <div className="mt-8 flex justify-end">
-                                        <button type="submit" className="w-full md:w-auto px-8 py-3 bg-gray-900 text-white rounded-xl font-black uppercase hover:bg-black">
+                                        <button type="submit" className="w-full md:w-auto px-8 py-3 bg-gray-900 text-white rounded-xl font-black uppercase hover:bg-black transition-transform active:scale-95 shadow-md">
                                             Guardar Resultado
                                         </button>
                                     </div>
@@ -883,12 +971,12 @@ export default function ControlPartidosPage() {
                                 <div className="p-6">
                                     {selectedMatch.subDiscipline.discipline.format === "ENFRENTAMIENTO" ? (
                                         <div className="grid md:grid-cols-2 gap-6">
-                                            {selectedMatch.homeTeam && <TeamPlayersViewer team={selectedMatch.homeTeam} />}
-                                            {selectedMatch.awayTeam && <TeamPlayersViewer team={selectedMatch.awayTeam} />}
+                                            {selectedMatch.homeTeam && <TeamPlayersViewer team={selectedMatch.homeTeam} subDisciplineId={selectedMatch.subDisciplineId} allMatches={matches} studentSurnames={allStudentSurnames} />}
+                                            {selectedMatch.awayTeam && <TeamPlayersViewer team={selectedMatch.awayTeam} subDisciplineId={selectedMatch.subDisciplineId} allMatches={matches} studentSurnames={allStudentSurnames} />}
                                         </div>
                                     ) : (
                                         <div className="grid md:grid-cols-2 gap-6">
-                                            {selectedMatch.competitors?.map((c: any) => <div key={c.id}><TeamPlayersViewer team={c.team} /></div>)}
+                                            {selectedMatch.competitors?.map((c: any) => <div key={c.id}><TeamPlayersViewer team={c.team} subDisciplineId={selectedMatch.subDisciplineId} allMatches={matches} studentSurnames={allStudentSurnames} /></div>)}
                                         </div>
                                     )}
                                 </div>
@@ -910,15 +998,15 @@ export default function ControlPartidosPage() {
                         </div>
 
                         <form onSubmit={handleScheduleMatch} className="p-6 overflow-y-auto">
-                            <div className="grid grid-cols-2 gap-5 mb-5 bg-gray-50 p-5 rounded-xl border border-gray-200">
+                            <div className="grid grid-cols-2 gap-5 mb-5 bg-gray-50 p-5 rounded-xl border border-gray-300">
                                 <div className="col-span-2">
-                                    <label className="block text-xs font-black text-gray-500 uppercase mb-2">Subdisciplina a Jugar</label>
-                                    <select required className="w-full border-2 border-gray-300 rounded-lg p-3 text-gray-900 font-bold focus:border-indigo-500 bg-white" value={newMatch.subDisciplineId} onChange={(e) => handleCreateChange("subDisciplineId", e.target.value)}>
+                                    <label className="block text-xs font-black text-black uppercase mb-2">Subdisciplina a Jugar</label>
+                                    <select required className="w-full border-2 border-gray-400 rounded-lg p-3 text-black font-bold focus:border-indigo-600 bg-white" value={newMatch.subDisciplineId} onChange={(e) => handleCreateChange("subDisciplineId", e.target.value)}>
                                         <option value="">Seleccione...</option>
                                         {disciplines.map(d => (
-                                            <optgroup key={d.id} label={`${d.name} (${d.audience})`} className="font-black text-indigo-900">
+                                            <optgroup key={d.id} label={`${d.name} (${d.audience})`} className="font-black text-black">
                                                 {d.subDisciplines.map((s: any) => (
-                                                    <option key={s.id} value={s.id} className="font-medium text-gray-800">{s.name}</option>
+                                                    <option key={s.id} value={s.id} className="font-bold text-black">{s.name}</option>
                                                 ))}
                                             </optgroup>
                                         ))}
@@ -926,8 +1014,8 @@ export default function ControlPartidosPage() {
                                 </div>
 
                                 <div className="col-span-2">
-                                    <label className="block text-xs font-black text-gray-500 uppercase mb-2">Etapa (Fase del Torneo)</label>
-                                    <select required className="w-full border-2 border-indigo-300 rounded-lg p-3 text-indigo-900 font-black bg-indigo-50 disabled:opacity-50" value={newMatch.stageId} onChange={(e) => handleCreateChange("stageId", e.target.value)} disabled={!newMatchActiveSub}>
+                                    <label className="block text-xs font-black text-black uppercase mb-2">Etapa (Fase del Torneo)</label>
+                                    <select required className="w-full border-2 border-indigo-400 rounded-lg p-3 text-black font-black bg-indigo-50 disabled:opacity-50" value={newMatch.stageId} onChange={(e) => handleCreateChange("stageId", e.target.value)} disabled={!newMatchActiveSub}>
                                         <option value="">{newMatchActiveSub ? "Seleccione la etapa..." : "Primero seleccione subdisciplina"}</option>
                                         {newMatchActiveSub?.stages?.map((st: any) => (
                                             <option key={st.id} value={st.id}>{st.stageOrder}. {st.name}</option>
@@ -936,8 +1024,8 @@ export default function ControlPartidosPage() {
                                 </div>
 
                                 <div>
-                                    <label className="block text-xs font-black text-gray-500 uppercase mb-2">Grupo de Aulas</label>
-                                    <select className="w-full border-2 border-gray-300 rounded-lg p-3 text-gray-900 font-bold bg-white focus:border-indigo-500" value={newMatch.groupId} onChange={(e) => handleCreateChange("groupId", e.target.value)}>
+                                    <label className="block text-xs font-black text-black uppercase mb-2">Grupo de Aulas</label>
+                                    <select className="w-full border-2 border-gray-400 rounded-lg p-3 text-black font-bold bg-white focus:border-indigo-600" value={newMatch.groupId} onChange={(e) => handleCreateChange("groupId", e.target.value)}>
                                         <option value="">Todos los grupos</option>
                                         {groups.map(g => (
                                             <option key={g.id} value={g.id}>{g.name}</option>
@@ -946,41 +1034,41 @@ export default function ControlPartidosPage() {
                                 </div>
 
                                 <div>
-                                    <label className="block text-xs font-black text-gray-500 uppercase mb-2">Orden / Llave</label>
-                                    <input type="number" min="1" required className="w-full border-2 border-gray-300 rounded-lg p-3 text-gray-900 font-bold bg-white focus:border-indigo-500 text-center" value={newMatch.matchOrder} onChange={(e) => handleCreateChange("matchOrder", Number(e.target.value))} />
+                                    <label className="block text-xs font-black text-black uppercase mb-2">Orden / Llave</label>
+                                    <input type="number" min="1" required className="w-full border-2 border-gray-400 rounded-lg p-3 text-black font-bold bg-white focus:border-indigo-600 text-center" value={newMatch.matchOrder} onChange={(e) => handleCreateChange("matchOrder", Number(e.target.value))} />
                                 </div>
 
                                 <div className="col-span-2">
-                                    <label className="block text-xs font-black text-gray-500 uppercase mb-2">Cancha / Lugar</label>
-                                    <input type="text" required className="w-full border-2 border-gray-300 rounded-lg p-3 text-gray-900 font-bold bg-white focus:border-indigo-500" value={newMatch.court} onChange={(e) => handleCreateChange("court", e.target.value)} />
+                                    <label className="block text-xs font-black text-black uppercase mb-2">Cancha / Lugar</label>
+                                    <input type="text" required className="w-full border-2 border-gray-400 rounded-lg p-3 text-black font-bold bg-white focus:border-indigo-600" value={newMatch.court} onChange={(e) => handleCreateChange("court", e.target.value)} />
                                 </div>
                             </div>
 
                             {newMatch.subDisciplineId && (
-                                <div className="mt-6 border-t border-gray-200 pt-6">
-                                    <h3 className="font-black text-indigo-900 mb-4 text-lg">Aulas Participantes</h3>
+                                <div className="mt-6 border-t-2 border-gray-300 pt-6">
+                                    <h3 className="font-black text-black mb-4 text-lg">Aulas Participantes</h3>
 
                                     {newMatch.format === "ENFRENTAMIENTO" ? (
-                                        <div className="flex gap-4">
-                                            <div className="w-1/2 flex flex-col gap-2">
-                                                <label className="block text-xs font-black text-gray-500 uppercase bg-indigo-100 p-2 text-center rounded text-indigo-900">🏠 Local</label>
-                                                <select required className="w-full border-2 border-gray-300 rounded-lg p-3 text-gray-900 font-bold focus:border-indigo-500" value={newMatch.homeClassroomId} onChange={(e) => handleCreateChange("homeClassroomId", e.target.value)}>
+                                        <div className="flex flex-col md:flex-row gap-4">
+                                            <div className="w-full md:w-1/2 flex flex-col gap-2 border-2 border-gray-200 p-3 rounded-xl bg-gray-50">
+                                                <label className="block text-xs font-black text-black uppercase bg-gray-200 p-2 text-center rounded">🏠 Local</label>
+                                                <select required className="w-full border-2 border-gray-400 rounded-lg p-3 text-black font-bold focus:border-indigo-600 bg-white" value={newMatch.homeClassroomId} onChange={(e) => handleCreateChange("homeClassroomId", e.target.value)}>
                                                     <option value="">Aula Local...</option>
                                                     {filteredClassrooms.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                                                 </select>
-                                                <select required className="w-full border-2 border-gray-300 rounded-lg p-3 text-gray-900 font-bold focus:border-indigo-500 bg-gray-50" value={newMatch.homeTeamLetter} onChange={(e) => handleCreateChange("homeTeamLetter", e.target.value)}>
+                                                <select required className="w-full border-2 border-gray-400 rounded-lg p-3 text-black font-bold focus:border-indigo-600 bg-white" value={newMatch.homeTeamLetter} onChange={(e) => handleCreateChange("homeTeamLetter", e.target.value)}>
                                                     <option value="A">Equipo A</option>
                                                     <option value="B">Equipo B</option>
                                                     <option value="C">Equipo C</option>
                                                 </select>
                                             </div>
-                                            <div className="w-1/2 flex flex-col gap-2">
-                                                <label className="block text-xs font-black text-gray-500 uppercase bg-red-100 p-2 text-center rounded text-red-900">✈️ Visitante</label>
-                                                <select className="w-full border-2 border-gray-300 rounded-lg p-3 text-gray-900 font-bold focus:border-indigo-500" value={newMatch.awayClassroomId} onChange={(e) => handleCreateChange("awayClassroomId", e.target.value)}>
+                                            <div className="w-full md:w-1/2 flex flex-col gap-2 border-2 border-gray-200 p-3 rounded-xl bg-gray-50">
+                                                <label className="block text-xs font-black text-black uppercase bg-gray-200 p-2 text-center rounded">✈️ Visitante</label>
+                                                <select className="w-full border-2 border-gray-400 rounded-lg p-3 text-black font-bold focus:border-indigo-600 bg-white" value={newMatch.awayClassroomId} onChange={(e) => handleCreateChange("awayClassroomId", e.target.value)}>
                                                     <option value="">Por definir (Llave abierta)</option>
                                                     {filteredClassrooms.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                                                 </select>
-                                                <select className="w-full border-2 border-gray-300 rounded-lg p-3 text-gray-900 font-bold focus:border-indigo-500 bg-gray-50" value={newMatch.awayTeamLetter} onChange={(e) => handleCreateChange("awayTeamLetter", e.target.value)}>
+                                                <select className="w-full border-2 border-gray-400 rounded-lg p-3 text-black font-bold focus:border-indigo-600 bg-white" value={newMatch.awayTeamLetter} onChange={(e) => handleCreateChange("awayTeamLetter", e.target.value)}>
                                                     <option value="A">Equipo A</option>
                                                     <option value="B">Equipo B</option>
                                                     <option value="C">Equipo C</option>
@@ -989,12 +1077,12 @@ export default function ControlPartidosPage() {
                                         </div>
                                     ) : (
                                         <div>
-                                            <label className="block text-xs font-black text-gray-500 mb-3 uppercase">Seleccionar Competidores</label>
-                                            <div className="max-h-48 overflow-y-auto border-2 border-gray-300 rounded-xl p-3 grid grid-cols-2 gap-3 bg-gray-50">
+                                            <label className="block text-xs font-black text-black mb-3 uppercase">Seleccionar Competidores</label>
+                                            <div className="max-h-48 overflow-y-auto border-2 border-gray-400 rounded-xl p-3 grid grid-cols-1 md:grid-cols-2 gap-3 bg-gray-50">
                                                 {filteredClassrooms.map(c => (
-                                                    <label key={c.id} className="flex items-center space-x-3 bg-white p-3 border border-gray-200 shadow-sm rounded-lg cursor-pointer hover:border-indigo-500 transition-all">
-                                                        <input type="checkbox" checked={newMatch.classroomIds.includes(c.id)} onChange={() => handleClassroomMultiSelect(c.id)} className="w-5 h-5 rounded text-indigo-600" />
-                                                        <span className="text-sm font-bold text-gray-900">{c.name}</span>
+                                                    <label key={c.id} className="flex items-center space-x-3 bg-white p-3 border-2 border-gray-200 shadow-sm rounded-lg cursor-pointer hover:border-indigo-600 transition-all">
+                                                        <input type="checkbox" checked={newMatch.classroomIds.includes(c.id)} onChange={() => handleClassroomMultiSelect(c.id)} className="w-6 h-6 rounded text-indigo-600 accent-indigo-600" />
+                                                        <span className="text-sm font-black text-black">{c.name}</span>
                                                     </label>
                                                 ))}
                                             </div>

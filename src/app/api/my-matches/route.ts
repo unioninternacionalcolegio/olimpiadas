@@ -13,6 +13,29 @@ export async function GET(request: Request) {
 
         const classroomId = session.user.classroomId;
 
+        // MAGIA QUIRÚRGICA: Creamos la regla de búsqueda de jugadores una sola vez 
+        // para reciclarla en Locales, Visitantes y Corredores (Competidores).
+        // Incluye la inteligencia para detectar si juegan en otros salones.
+        const playersInclude = {
+            include: {
+                player: {
+                    include: {
+                        teams: {
+                            include: {
+                                team: {
+                                    include: { classroom: true }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            orderBy: [
+                { isStarter: 'desc' as const },
+                { player: { lastName: 'asc' as const } }
+            ]
+        };
+
         // 1. Obtener los partidos donde participe el salón (Como Home, Away o Competidor)
         const matches = await prisma.match.findMany({
             where: {
@@ -28,25 +51,25 @@ export async function GET(request: Request) {
                 homeTeam: {
                     include: {
                         classroom: true,
-                        players: {
-                            include: { player: { include: { teams: { include: { team: true } } } } },
-                            orderBy: [{ isStarter: 'desc' }, { player: { lastName: 'asc' } }]
-                        }
+                        players: playersInclude
                     }
                 },
                 awayTeam: {
                     include: {
                         classroom: true,
-                        players: {
-                            include: { player: { include: { teams: { include: { team: true } } } } },
-                            orderBy: [{ isStarter: 'desc' }, { player: { lastName: 'asc' } }]
-                        }
+                        players: playersInclude
                     }
                 },
                 competitors: {
                     include: {
-                        team: { include: { classroom: true } },
-                        player: { include: { teams: { include: { team: true } } } }
+                        // ¡AQUÍ ESTÁ LA SOLUCIÓN DE LOS CORREDORES!
+                        team: {
+                            include: {
+                                classroom: true,
+                                players: playersInclude // Ya trae la nómina completa
+                            }
+                        },
+                        player: true
                     }
                 }
             },

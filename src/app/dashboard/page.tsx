@@ -63,6 +63,10 @@ export default async function DashboardPage() {
                                 <h2 className="text-xl font-bold text-red-800">PARTICIPANTES</h2>
                                 <p className="text-red-600 mt-2">TOTAL DE PARTICIPANTES DEL DIA DE LA FAMILIA.</p>
                             </Link>
+                            <Link href="/dashboard/aulas/delegados" className="block p-6 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 transition">
+                                <h2 className="text-xl font-bold text-green-800">DELEGADOS</h2>
+                                <p className="text-green-600 mt-2">LISTA DE DELEGADOS E IMPRESION DE CREDENCIALES</p>
+                            </Link>
                         </>
                     )}
                 </div>
