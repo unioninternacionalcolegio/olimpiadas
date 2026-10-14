@@ -41,8 +41,6 @@ const MatchBadge = ({ status }: { status: string }) => {
 };
 
 const TeamPlayersViewer = ({ team, subDisciplineId, allMatches, studentSurnames }: { team: TeamWithPlayers, subDisciplineId: string, allMatches: Match[], studentSurnames: Set<string> }) => {
-
-    // Función para buscar si el jugador está en otro equipo de la MISMA subdisciplina
     const getDuplicateInfo = (dni: string) => {
         const otherTeams = new Set<string>();
         allMatches.filter(m => m.subDisciplineId === subDisciplineId).forEach(m => {
@@ -89,7 +87,6 @@ const TeamPlayersViewer = ({ team, subDisciplineId, allMatches, studentSurnames 
                                     </span>
                                 </div>
 
-                                {/* Badges Inteligentes */}
                                 <div className="mt-2 flex gap-1.5 flex-wrap pl-12">
                                     {p.player.isParent && (
                                         <span className={`text-[9px] px-2 py-0.5 rounded font-black uppercase border shadow-sm ${isAdoptive ? 'bg-orange-100 text-orange-900 border-orange-400' : 'bg-green-100 text-green-900 border-green-400'}`}>
@@ -121,7 +118,6 @@ export default function ControlPartidosPage() {
     const [classrooms, setClassrooms] = useState<any[]>([]);
     const [isLoading, setIsLoading] = useState(true);
 
-    // Estado Inteligente
     const [allStudentSurnames, setAllStudentSurnames] = useState<Set<string>>(new Set());
 
     // FILTROS
@@ -162,7 +158,6 @@ export default function ControlPartidosPage() {
                 const fetchedMatches = await mRes.json();
                 setMatches(fetchedMatches);
 
-                // Computar Apellidos de Estudiantes Globales
                 const surnames = new Set<string>();
                 fetchedMatches.forEach((m: Match) => {
                     const extract = (t?: TeamWithPlayers) => {
@@ -274,7 +269,6 @@ export default function ControlPartidosPage() {
         if (!selectedMatch) return;
         const format = selectedMatch.subDiscipline.discipline.format;
 
-        // Incluimos el winnerId en el payload
         const body: any = {
             format,
             status,
@@ -331,34 +325,77 @@ export default function ControlPartidosPage() {
         });
     };
 
+    // NUEVO: Clasificación Global Acumulativa Mejorada
     const calculateGlobalStandings = (): any[] => {
         if (!selectedDisciplineId) return [];
 
+        const activeDisc = disciplines.find(d => d.id === selectedDisciplineId);
+        const aud = activeDisc?.audience;
+
+        // Agarramos TODOS los partidos finalizados de esta disciplina general
         const validMatches = matches.filter(m =>
             m.subDiscipline.discipline.id === selectedDisciplineId &&
             (m.status === "FINALIZADO" || m.status === "WALKOVER")
         );
 
-        const globalStandings: Record<string, { classroomId: string, classroomName: string, totalPts: number }> = {};
+        const globalStandings: Record<string, any> = {};
+
+        const initTeam = (classroomId: string, classroomName: string) => {
+            if (!globalStandings[classroomId]) {
+                globalStandings[classroomId] = {
+                    classroomId, classroomName, totalPts: 0,
+                    gf: 0, gc: 0, dg: 0, pj: 0, pg: 0, pe: 0, pp: 0
+                };
+            }
+            return globalStandings[classroomId];
+        };
 
         validMatches.forEach(m => {
             if (m.subDiscipline.discipline.format === "ENFRENTAMIENTO") {
                 if (m.homeTeam && m.awayTeam) {
-                    if (!globalStandings[m.homeTeam.classroomId]) globalStandings[m.homeTeam.classroomId] = { classroomId: m.homeTeam.classroomId, classroomName: m.homeTeam.classroom.name, totalPts: 0 };
-                    if (!globalStandings[m.awayTeam.classroomId]) globalStandings[m.awayTeam.classroomId] = { classroomId: m.awayTeam.classroomId, classroomName: m.awayTeam.classroom.name, totalPts: 0 };
+                    const home = initTeam(m.homeTeam.classroomId, m.homeTeam.classroom.name);
+                    const away = initTeam(m.awayTeam.classroomId, m.awayTeam.classroom.name);
 
-                    globalStandings[m.homeTeam.classroomId].totalPts += m.homeTablePts || 0;
-                    globalStandings[m.awayTeam.classroomId].totalPts += m.awayTablePts || 0;
+                    home.pj++; away.pj++;
+                    home.gf += m.homeScore; home.gc += m.awayScore;
+                    away.gf += m.awayScore; away.gc += m.homeScore;
+
+                    if (m.homeScore > m.awayScore) { home.pg++; away.pp++; }
+                    else if (m.awayScore > m.homeScore) { away.pg++; home.pp++; }
+                    else { home.pe++; away.pe++; }
+
+                    home.totalPts += m.homeTablePts || 0;
+                    away.totalPts += m.awayTablePts || 0;
                 }
             } else {
                 m.competitors?.forEach((c: any) => {
-                    if (!globalStandings[c.team.classroomId]) globalStandings[c.team.classroomId] = { classroomId: c.team.classroomId, classroomName: c.team.classroom.name, totalPts: 0 };
-                    globalStandings[c.team.classroomId].totalPts += (c.points || 0);
+                    const team = initTeam(c.team.classroomId, c.team.classroom.name);
+                    team.pj++;
+                    team.totalPts += (c.points || 0);
                 });
             }
         });
 
-        return Object.values(globalStandings).sort((a, b) => b.totalPts - a.totalPts);
+        Object.values(globalStandings).forEach((st: any) => {
+            st.dg = st.gf - st.gc;
+        });
+
+        let result = Object.values(globalStandings);
+
+        // NUEVO: Si hay un grupo seleccionado, filtramos el resultado de la tabla global
+        if (selectedGroupIdFilter && selectedGroupIdFilter !== "null") {
+            result = result.filter((st: any) => {
+                const c = classrooms.find(cls => cls.id === st.classroomId);
+                if (!c) return false;
+                return aud === "PADRES" ? c.parentGroupId === selectedGroupIdFilter : c.studentGroupId === selectedGroupIdFilter;
+            });
+        }
+
+        return result.sort((a: any, b: any) => {
+            if (b.totalPts !== a.totalPts) return b.totalPts - a.totalPts;
+            if (b.dg !== a.dg) return b.dg - a.dg;
+            return b.gf - a.gf;
+        });
     };
 
     const handleSelectWinnerForNextStage = (stageId: string, teamId: string, teamName: string, classroomId: string, letter: string) => {
@@ -611,7 +648,7 @@ export default function ControlPartidosPage() {
                                                                         <table className="w-full text-[11px] text-center whitespace-nowrap">
                                                                             <thead className="bg-indigo-50 font-black text-indigo-900 border-b-2 border-indigo-200">
                                                                                 <tr>
-                                                                                    <th className="text-left p-2 pl-3">Equipo</th><th className="p-2 w-6">PJ</th><th className="p-2 w-6 text-gray-500">G</th><th className="p-2 w-6 text-gray-500">E</th><th className="p-2 w-6 text-gray-500">P</th><th className="p-2 w-6 text-black">GF</th><th className="p-2 w-6 text-gray-500">GC</th><th className="p-2 w-6 bg-indigo-100 text-black">DG</th><th className="p-2 w-10 text-indigo-700 text-xs">PTS</th>
+                                                                                    <th className="text-left p-2 pl-3">Equipo</th><th className="p-2 w-6">PJ</th><th className="p-2 w-6 text-gray-900">G</th><th className="p-2 w-6 text-gray-500">E</th><th className="p-2 w-6 text-gray-500">P</th><th className="p-2 w-6 text-black">GF</th><th className="p-2 w-6 text-gray-500">GC</th><th className="p-2 w-6 bg-indigo-100 text-black">DG</th><th className="p-2 w-10 text-indigo-700 text-xs">PTS</th>
                                                                                 </tr>
                                                                             </thead>
                                                                             <tbody className="divide-y divide-gray-100 font-bold text-gray-800">
@@ -651,31 +688,51 @@ export default function ControlPartidosPage() {
                             </div>
                         )}
 
+                        {/* ==========================================
+                          🏆 CLASIFICACIÓN GENERAL MEJORADA
+                        ========================================== */}
                         {selectedDisciplineId && globalStandings.length > 0 && (
                             <div className="mt-12 bg-white rounded-2xl shadow-xl border-2 border-indigo-600 overflow-hidden mb-8">
-                                <div className="bg-indigo-700 text-white p-6 text-center">
+                                <div className="bg-indigo-700 text-white p-6 text-center relative">
                                     <h2 className="text-2xl font-black uppercase tracking-widest">🏆 Clasificación General: {activeDiscipline?.name}</h2>
-                                    <p className="text-indigo-200 text-sm mt-1 font-bold">Suma de Puntos de todas las subcategorías (Finalizadas)</p>
+                                    <p className="text-indigo-200 text-sm mt-1 font-bold">
+                                        Suma de todos los partidos jugados en esta disciplina
+                                        {selectedGroupIdFilter && selectedGroupIdFilter !== "null" && ` - Filtrado por: ${groups.find(g => g.id === selectedGroupIdFilter)?.name}`}
+                                    </p>
                                 </div>
                                 <div className="p-0 overflow-x-auto">
-                                    <table className="w-full text-left text-sm whitespace-nowrap">
-                                        <thead className="bg-indigo-50 text-indigo-900 font-black uppercase tracking-wider text-xs border-b-2 border-indigo-200">
+                                    <table className="w-full text-center text-sm whitespace-nowrap">
+                                        <thead className="bg-indigo-50 text-indigo-900 font-black uppercase tracking-wider text-[10px] border-b-2 border-indigo-200">
                                             <tr>
-                                                <th className="p-4 text-center w-16">Rank</th>
-                                                <th className="p-4">Aula / Salón</th>
-                                                <th className="p-4 text-right">Puntaje Total Absoluto</th>
+                                                <th className="p-3 w-16">Rank</th>
+                                                <th className="p-3 text-left">Aula / Salón</th>
+                                                <th className="p-3 w-10">PJ</th>
+                                                <th className="p-3 w-10 text-gray-500">G</th>
+                                                <th className="p-3 w-10 text-gray-500">E</th>
+                                                <th className="p-3 w-10 text-gray-500">P</th>
+                                                <th className="p-3 w-10">GF</th>
+                                                <th className="p-3 w-10 text-gray-500">GC</th>
+                                                <th className="p-3 w-10 bg-indigo-100">DG</th>
+                                                <th className="p-3 w-16 text-indigo-700 text-xs">PTS</th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-gray-100">
                                             {globalStandings.map((st: any, idx: number) => (
                                                 <tr key={st.classroomId} className={`hover:bg-indigo-50 transition-colors ${idx === 0 ? 'bg-yellow-50' : idx === 1 ? 'bg-gray-100' : idx === 2 ? 'bg-orange-50' : ''}`}>
-                                                    <td className="p-4 text-center">
-                                                        <span className={`w-8 h-8 flex items-center justify-center rounded-full font-black text-white mx-auto ${idx === 0 ? 'bg-yellow-500 shadow-lg scale-110' : idx === 1 ? 'bg-gray-500 shadow' : idx === 2 ? 'bg-orange-500 shadow' : 'bg-gray-800'}`}>
+                                                    <td className="p-3 text-center">
+                                                        <span className={`w-8 h-8 flex items-center justify-center rounded-full font-black text-white mx-auto text-sm ${idx === 0 ? 'bg-yellow-500 shadow-lg scale-110' : idx === 1 ? 'bg-gray-500 shadow' : idx === 2 ? 'bg-orange-500 shadow' : 'bg-gray-800'}`}>
                                                             {idx + 1}
                                                         </span>
                                                     </td>
-                                                    <td className="p-4 font-black text-gray-900 text-lg">{st.classroomName}</td>
-                                                    <td className="p-4 text-right font-black text-2xl text-indigo-700">{st.totalPts} <span className="text-sm text-gray-600">Pts</span></td>
+                                                    <td className="p-3 font-black text-gray-900 text-left">{st.classroomName}</td>
+                                                    <td className="p-3 text-gray-500">{st.pj}</td>
+                                                    <td className="p-3 text-gray-500">{st.pg}</td>
+                                                    <td className="p-3 text-gray-500">{st.pe}</td>
+                                                    <td className="p-3 text-gray-500">{st.pp}</td>
+                                                    <td className="p-3 text-black font-bold">{st.gf}</td>
+                                                    <td className="p-3 text-gray-500">{st.gc}</td>
+                                                    <td className="p-3 bg-indigo-50/50 font-black text-black">{st.dg > 0 ? `+${st.dg}` : st.dg}</td>
+                                                    <td className="p-3 font-black text-lg text-indigo-700 bg-indigo-50/30">{st.totalPts}</td>
                                                 </tr>
                                             ))}
                                         </tbody>
@@ -800,23 +857,41 @@ export default function ControlPartidosPage() {
                         );
                     })}
 
+                    {/* NUEVA VISTA DE IMPRESIÓN PARA LA CLASIFICACIÓN GENERAL */}
                     {globalStandings.length > 0 && (
                         <div className="mt-10 page-break-inside-avoid">
-                            <h3 className="text-xl font-black uppercase bg-gray-200 p-2 border-l-4 border-black mb-4 text-black">🏆 Clasificación General (Suma Puntos)</h3>
-                            <table className="w-full text-sm border-collapse border border-gray-400 text-black">
+                            <h3 className="text-xl font-black uppercase bg-gray-200 p-2 border-l-4 border-black mb-4 text-black">
+                                🏆 Clasificación General: {activeDiscipline?.name}
+                                {selectedGroupIdFilter && selectedGroupIdFilter !== "null" && ` (${groups.find(g => g.id === selectedGroupIdFilter)?.name})`}
+                            </h3>
+                            <table className="w-full text-xs border-collapse border border-gray-400 text-black text-center">
                                 <thead>
                                     <tr className="bg-gray-100">
-                                        <th className="border border-gray-400 p-2 w-16 text-center">Rank</th>
-                                        <th className="border border-gray-400 p-2 text-left">Aula / Salón</th>
-                                        <th className="border border-gray-400 p-2 w-32 text-center">Puntaje Absoluto</th>
+                                        <th className="border border-gray-400 p-1 w-10">Rank</th>
+                                        <th className="border border-gray-400 p-1 text-left pl-2">Aula / Salón</th>
+                                        <th className="border border-gray-400 p-1 w-8">PJ</th>
+                                        <th className="border border-gray-400 p-1 w-8">G</th>
+                                        <th className="border border-gray-400 p-1 w-8">E</th>
+                                        <th className="border border-gray-400 p-1 w-8">P</th>
+                                        <th className="border border-gray-400 p-1 w-8">GF</th>
+                                        <th className="border border-gray-400 p-1 w-8">GC</th>
+                                        <th className="border border-gray-400 p-1 w-8">DG</th>
+                                        <th className="border border-gray-400 p-1 w-12 font-black">PTS</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     {globalStandings.map((st: any, idx: number) => (
                                         <tr key={st.classroomId}>
-                                            <td className="border border-gray-400 p-2 text-center font-bold">{idx + 1}</td>
-                                            <td className="border border-gray-400 p-2 font-bold text-left">{st.classroomName}</td>
-                                            <td className="border border-gray-400 p-2 text-center font-black">{st.totalPts} Pts</td>
+                                            <td className="border border-gray-400 p-1 font-bold">{idx + 1}</td>
+                                            <td className="border border-gray-400 p-1 font-bold text-left pl-2">{st.classroomName}</td>
+                                            <td className="border border-gray-400 p-1">{st.pj}</td>
+                                            <td className="border border-gray-400 p-1">{st.pg}</td>
+                                            <td className="border border-gray-400 p-1">{st.pe}</td>
+                                            <td className="border border-gray-400 p-1">{st.pp}</td>
+                                            <td className="border border-gray-400 p-1">{st.gf}</td>
+                                            <td className="border border-gray-400 p-1">{st.gc}</td>
+                                            <td className="border border-gray-400 p-1 font-bold">{st.dg}</td>
+                                            <td className="border border-gray-400 p-1 font-black">{st.totalPts}</td>
                                         </tr>
                                     ))}
                                 </tbody>
